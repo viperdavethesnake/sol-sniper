@@ -238,6 +238,19 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		// All arithmetic is float64 to avoid uint64 overflow
 		// (virtual_sol × virtual_tokens ≈ 3.2e25 > uint64 max of 1.84e19).
 		tokensOut, frictionScore, priceImpactPct = pumpFunSimulate(ev.LiqSOL, buyLamports)
+
+		// Add estimated Jito tip overhead so frictionScore reflects total execution
+		// cost, not just swap loss. Mirrors executor.calcTipLamports(liqSOL, 0.001).
+		// tipMultiplier = clamp(liqSOL/10, 1, 5); tip = 0.001 × multiplier SOL.
+		tipMul := ev.LiqSOL / 10.0
+		if tipMul < 1.0 {
+			tipMul = 1.0
+		} else if tipMul > 5.0 {
+			tipMul = 5.0
+		}
+		tipPct := 0.001 * tipMul * 1e9 / float64(buyLamports) * 100
+		frictionScore += tipPct
+
 		baseVault = ev.Pool
 		quoteVault = ev.Pool
 	} else {
