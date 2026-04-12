@@ -5,6 +5,10 @@ datasources:
     type: yesoreyeram-infinity-datasource
     uid: bot-api-01
     access: proxy
+    url: http://localhost:8080
     isDefault: false
     jsonData:
       global_queries: []
+      allowedHosts:
+        - localhost:8080
+        - http://localhost:8080
