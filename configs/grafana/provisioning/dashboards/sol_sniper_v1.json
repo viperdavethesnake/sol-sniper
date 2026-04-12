@@ -7,7 +7,7 @@
   "schemaVersion": 38,
   "title": "Sol Sniper — SS-V1",
   "uid": "sol-sniper-01",
-  "version": 3,
+  "version": 4,
   "panels": [
 
     {
@@ -768,6 +768,8 @@
           "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
           "refId": "A",
           "type": "json",
+          "parser": "backend",
+          "source": "url",
           "method": "GET",
           "url": "http://localhost:8080/api/positions",
           "root_selector": "positions",
@@ -836,6 +838,8 @@
           "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
           "refId": "A",
           "type": "json",
+          "parser": "backend",
+          "source": "url",
           "method": "GET",
           "url": "http://localhost:8080/api/leaderboard",
           "root_selector": "top_gainers",
@@ -892,6 +896,8 @@
           "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
           "refId": "A",
           "type": "json",
+          "parser": "backend",
+          "source": "url",
           "method": "GET",
           "url": "http://localhost:8080/api/leaderboard",
           "root_selector": "top_losers",
