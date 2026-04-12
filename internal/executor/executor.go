@@ -263,7 +263,12 @@ func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
 			Float64("buy_sol", float64(buyLamports)/1e9).
 			Float64("tip_sol", tipSOL).
 			Msg("executor: [SIM] bundle skipped — simulation mode")
-		e.savePosition(ctx, sig, "", float64(buyLamports)/1e9, tipSOL, sig.TokensOut)
+		// E2: apply a conservative 10% slippage haircut to the analyzer's entry
+		// quote so SIM fills are not systematically optimistic. The analyzer quotes
+		// at pool mid-price without accounting for the actual buy's market impact
+		// on a live, moving pool.
+		simTokensIn := uint64(float64(sig.TokensOut) * 0.90)
+		e.savePosition(ctx, sig, "", float64(buyLamports)/1e9, tipSOL, simTokensIn)
 		return
 	}
 
@@ -606,6 +611,15 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
 	}
 
 	roiPct := (currentSOL - pos.SOLSpent) / pos.SOLSpent * 100
+
+	log.Debug().
+		Str("mint", pos.Token).
+		Str("source", pos.Source).
+		Float64("current_sol", currentSOL).
+		Float64("sol_spent", pos.SOLSpent).
+		Float64("roi_pct", roiPct).
+		Float64("elapsed_s", elapsed.Seconds()).
+		Msg("executor: monitor tick")
 
 	// Update volatile fields and record trajectory milestones under position lock.
 	pos.mu.Lock()
