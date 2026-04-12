@@ -71,10 +71,12 @@ type Position struct {
 	TipSOL         float64    `json:"tip_sol"`
 	TokensIn       uint64     `json:"tokens_in"`
 	OpenedAt       time.Time  `json:"opened_at"`
-	Status         string     `json:"status"` // "open" | "sold" | "failed"
+	Status         string     `json:"status"` // "open" | "selling" | "sold" | "failed"
 	SellSignature  string     `json:"sell_signature,omitempty"`
 	ClosedAt       *time.Time `json:"closed_at,omitempty"`
-	// Set by monitor before sell is triggered; used for dataset write.
+
+	// mu guards Status, lastQuotedSOL, and snaps — all mutated by monitor goroutines.
+	mu            sync.Mutex
 	lastQuotedSOL float64
 	snaps         map[string]bool
 }
@@ -93,7 +95,7 @@ type Executor struct {
 	jitoHTTPURL string
 	httpClient  *http.Client
 
-	// Rolling tip-success counters for the JitoTipSuccessRatio metric.
+	// Rolling tip-success counters — mutated under e.mu.Lock().
 	tipAttempts int64
 	tipLanded   int64
 }
@@ -188,6 +190,12 @@ func (e *Executor) DisarmKillSwitch(ctx context.Context) error {
 // ─── Buy ──────────────────────────────────────────────────────────────────────
 
 func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Str("mint", sig.Mint.String()).Msg("executor: panic in executeBuy")
+		}
+	}()
+
 	start := time.Now()
 	mintStr := sig.Mint.String()
 
@@ -260,13 +268,17 @@ func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
 	}
 
 	txSig, landed, err := e.submitBundle(ctx, tx)
+	e.mu.Lock()
 	e.tipAttempts++
 	if landed {
 		e.tipLanded++
 	}
+	var ratio float64
 	if e.tipAttempts > 0 {
-		metrics.JitoTipSuccessRatio.Set(float64(e.tipLanded) / float64(e.tipAttempts))
+		ratio = float64(e.tipLanded) / float64(e.tipAttempts)
 	}
+	e.mu.Unlock()
+	metrics.JitoTipSuccessRatio.Set(ratio)
 
 	if err != nil {
 		log.Error().Err(err).Str("mint", mintStr).Msg("executor: bundle submission failed")
@@ -290,13 +302,26 @@ func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
 
 func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, txSig string, solSpent, tipSOL float64, tokensIn uint64) {
 	mintStr := sig.Mint.String()
+
+	// For Pump.fun, BaseVault must be the bonding curve's token ATA
+	// (associated_bonding_curve), not the bonding curve account itself.
+	// The analyzer sets BaseVault = Pool as a sentinel for virtual-reserve math;
+	// the executor needs the real ATA for instruction building and the monitor.
+	baseVaultStr := sig.BaseVault.String()
+	if sig.Source == "pump_fun" {
+		ata, _, err := solana.FindAssociatedTokenAddress(sig.Pool, sig.Mint)
+		if err == nil {
+			baseVaultStr = ata.String()
+		}
+	}
+
 	pos := &Position{
 		Token:          mintStr,
 		Pool:           sig.Pool.String(),
 		Source:         sig.Source,
 		Symbol:         sig.Symbol,
-		BaseVault:      sig.BaseVault.String(),
-		QuoteVault:     sig.QuoteVault.String(),
+		BaseVault:      baseVaultStr,
+		QuoteVault:     sig.QuoteVault.String(), // for Pump.fun this is ev.Pool (bonding curve)
 		LiqSOL:         sig.LiqSOL,
 		FrictionScore:  sig.FrictionScore,
 		PriceImpactPct: sig.EntryPriceImpactPct,
@@ -318,6 +343,27 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, 
 // ─── Sell ─────────────────────────────────────────────────────────────────────
 
 func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Str("mint", pos.Token).Msg("executor: panic in executeSell")
+		}
+	}()
+
+	// Atomically claim this position — prevents duplicate sells from concurrent
+	// monitor ticks or kill-switch races.
+	pos.mu.Lock()
+	if pos.Status != "open" && pos.Status != "selling" {
+		pos.mu.Unlock()
+		return
+	}
+	if pos.Status == "selling" {
+		// Another goroutine already claimed it.
+		pos.mu.Unlock()
+		return
+	}
+	pos.Status = "selling"
+	pos.mu.Unlock()
+
 	mintStr := pos.Token
 	sig := &analyzer.TradeSignal{
 		Mint:       solana.MustPublicKeyFromBase58(mintStr),
@@ -330,20 +376,31 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 	sellIx, err := e.buildSellInstruction(ctx, sig, pos.TokensIn)
 	if err != nil {
 		log.Error().Err(err).Str("mint", mintStr).Msg("executor: failed to build sell instruction")
+		// Revert status so the next monitor tick can retry.
+		pos.mu.Lock()
+		pos.Status = "open"
+		pos.mu.Unlock()
 		return
 	}
 
-	tipLamports := uint64(0.0005 * 1e9)
+	// Scale sell tip with current liquidity (mirrors buy tip, no hardcoded flat rate).
+	sellTipLamports := calcTipLamports(pos.LiqSOL, 0.001)
 	tipAccount := jitoTipAccounts[int(time.Now().UnixNano())%len(jitoTipAccounts)]
-	tipIx, err := system.NewTransferInstruction(tipLamports, e.wallet.PublicKey(), tipAccount).ValidateAndBuild()
+	tipIx, err := system.NewTransferInstruction(sellTipLamports, e.wallet.PublicKey(), tipAccount).ValidateAndBuild()
 	if err != nil {
 		log.Error().Err(err).Msg("executor: sell tip instruction failed")
+		pos.mu.Lock()
+		pos.Status = "open"
+		pos.mu.Unlock()
 		return
 	}
 
 	bhResp, err := e.rpc.GetLatestBlockhash(ctx, rpc.CommitmentConfirmed)
 	if err != nil {
 		log.Error().Err(err).Msg("executor: blockhash fetch failed for sell")
+		pos.mu.Lock()
+		pos.Status = "open"
+		pos.mu.Unlock()
 		return
 	}
 
@@ -354,6 +411,9 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 	)
 	if err != nil {
 		log.Error().Err(err).Str("mint", mintStr).Msg("executor: failed to build sell tx")
+		pos.mu.Lock()
+		pos.Status = "open"
+		pos.mu.Unlock()
 		return
 	}
 	if _, err := tx.Sign(func(pk solana.PublicKey) *solana.PrivateKey {
@@ -363,6 +423,9 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 		return nil
 	}); err != nil {
 		log.Error().Err(err).Str("mint", mintStr).Msg("executor: failed to sign sell tx")
+		pos.mu.Lock()
+		pos.Status = "open"
+		pos.mu.Unlock()
 		return
 	}
 
@@ -377,6 +440,9 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 	txSig, landed, err := e.submitBundle(ctx, tx)
 	if err != nil || !landed {
 		log.Error().Err(err).Str("mint", mintStr).Msg("executor: sell bundle failed")
+		pos.mu.Lock()
+		pos.Status = "open" // allow retry on next monitor tick
+		pos.mu.Unlock()
 		return
 	}
 
@@ -390,16 +456,34 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 	e.closePosition(ctx, pos, trigger, txSig)
 
 	if trigger == "stop_loss" {
+		// NOTE (E11): ideally blacklists the deployer wallet, not the pool.
+		// The pool is unique per token, so this never prevents a re-entry on
+		// the same deployer's next token. Fix requires capturing deployer pubkey
+		// from the Pump.fun create instruction signer in the listener.
 		_ = e.cache.BlacklistDeployer(ctx, pos.Pool)
 	}
 }
 
 func (e *Executor) closePosition(ctx context.Context, pos *Position, trigger, txSig string) {
 	now := time.Now()
-	deltaSOL := pos.lastQuotedSOL - pos.SOLSpent
+	pos.mu.Lock()
+	lastQuoted := pos.lastQuotedSOL
 	pos.Status = "sold"
 	pos.SellSignature = txSig
 	pos.ClosedAt = &now
+	pos.mu.Unlock()
+
+	deltaSOL := lastQuoted - pos.SOLSpent
+	if lastQuoted == 0 {
+		// Monitor never produced a valid price quote (likely vault-read failure).
+		// Logging the gap; using 0 instead of -pos.SOLSpent to avoid polluting
+		// training data with fake -100% losses.
+		log.Warn().
+			Str("mint", pos.Token).
+			Str("trigger", trigger).
+			Msg("executor: closing position with no price data — trajectory will be empty")
+		deltaSOL = 0
+	}
 
 	e.mu.Lock()
 	delete(e.positions, pos.Token)
@@ -461,8 +545,8 @@ func (e *Executor) checkAllPositions(ctx context.Context) {
 		e.mu.RLock()
 		pos := e.positions[k]
 		e.mu.RUnlock()
-		if pos != nil && pos.Status == "open" {
-			e.checkPosition(ctx, pos)
+		if pos != nil {
+			go e.checkPosition(ctx, pos)
 		}
 	}
 }
@@ -480,20 +564,57 @@ var milestones = []struct {
 }
 
 func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
-	baseVault := solana.MustPublicKeyFromBase58(pos.BaseVault)
-	quoteVault := solana.MustPublicKeyFromBase58(pos.QuoteVault)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Str("mint", pos.Token).Msg("executor: panic in checkPosition")
+		}
+	}()
 
-	reserveBase, reserveQuote, err := e.readVaultBalances(ctx, baseVault, quoteVault, pos.Source)
-	if err != nil {
-		log.Warn().Err(err).Str("mint", pos.Token).Msg("executor: monitor vault read failed")
+	// Quick status check — avoid RPC work if position is already closing.
+	pos.mu.Lock()
+	if pos.Status != "open" {
+		pos.mu.Unlock()
 		return
 	}
+	pos.mu.Unlock()
 
-	currentSOL := float64(cpAmountOut(pos.TokensIn, reserveBase, reserveQuote)) / 1e9
-	pos.lastQuotedSOL = currentSOL
-	roiPct := (currentSOL - pos.SOLSpent) / pos.SOLSpent * 100
 	elapsed := time.Since(pos.OpenedAt)
 
+	var currentSOL float64
+
+	if pos.Source == "pump_fun" {
+		// Pump.fun: quote the current sell value using the bonding curve's real SOL
+		// balance and the synthetic virtual-reserve formula.
+		// QuoteVault stores the bonding curve pubkey (set by savePosition).
+		bondingCurve := solana.MustPublicKeyFromBase58(pos.Pool)
+		balResp, err := e.rpc.GetBalance(ctx, bondingCurve, rpc.CommitmentConfirmed)
+		if err != nil {
+			log.Warn().Err(err).Str("mint", pos.Token).Msg("executor: monitor bonding curve read failed")
+			return
+		}
+		currentSOL = pumpFunSellQuote(float64(balResp.Value), float64(pos.TokensIn))
+	} else {
+		// Raydium: read WSOL/token vault balances and apply constant-product formula.
+		baseVault := solana.MustPublicKeyFromBase58(pos.BaseVault)
+		quoteVault := solana.MustPublicKeyFromBase58(pos.QuoteVault)
+		reserveBase, reserveQuote, err := e.readVaultBalances(ctx, baseVault, quoteVault)
+		if err != nil {
+			log.Warn().Err(err).Str("mint", pos.Token).Msg("executor: monitor vault read failed")
+			return
+		}
+		currentSOL = float64(cpAmountOut(pos.TokensIn, reserveBase, reserveQuote)) / 1e9
+	}
+
+	roiPct := (currentSOL - pos.SOLSpent) / pos.SOLSpent * 100
+
+	// Update volatile fields and record trajectory milestones under position lock.
+	pos.mu.Lock()
+	if pos.Status != "open" {
+		// Race: another goroutine already claimed this position between our reads.
+		pos.mu.Unlock()
+		return
+	}
+	pos.lastQuotedSOL = currentSOL
 	for _, m := range milestones {
 		if elapsed >= m.duration && !pos.snaps[m.label] {
 			pos.snaps[m.label] = true
@@ -507,16 +628,26 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
 		}
 	}
 
+	// Check exit triggers; set Status = "selling" before releasing lock so no
+	// other goroutine spawns a second sell for the same position.
 	switch {
 	case roiPct >= e.cfg.TakeProfitPct:
+		pos.Status = "selling"
+		pos.mu.Unlock()
 		log.Info().Str("mint", pos.Token).Float64("roi_pct", roiPct).Msg("executor: take-profit")
 		go e.executeSell(ctx, pos, "take_profit")
 	case roiPct <= -e.cfg.StopLossPct:
+		pos.Status = "selling"
+		pos.mu.Unlock()
 		log.Info().Str("mint", pos.Token).Float64("roi_pct", roiPct).Msg("executor: stop-loss")
 		go e.executeSell(ctx, pos, "stop_loss")
 	case elapsed > 15*time.Minute:
+		pos.Status = "selling"
+		pos.mu.Unlock()
 		log.Info().Str("mint", pos.Token).Msg("executor: position timeout")
 		go e.executeSell(ctx, pos, "timeout")
+	default:
+		pos.mu.Unlock()
 	}
 }
 
@@ -577,6 +708,8 @@ func (e *Executor) submitBundle(ctx context.Context, tx *solana.Transaction) (st
 }
 
 // awaitConfirmation polls GetSignatureStatuses until confirmed or timeout.
+// Uses searchTransactionHistory=true for the final polls to avoid false negatives
+// when the signature has aged out of the recent-status cache.
 func (e *Executor) awaitConfirmation(ctx context.Context, sig solana.Signature, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -585,7 +718,9 @@ func (e *Executor) awaitConfirmation(ctx context.Context, sig solana.Signature, 
 			return false, ctx.Err()
 		case <-time.After(2 * time.Second):
 		}
-		result, err := e.rpc.GetSignatureStatuses(ctx, false, sig)
+		// Use searchTransactionHistory=true so signatures that aged out of the
+		// recent-cache are still found (E8 fix).
+		result, err := e.rpc.GetSignatureStatuses(ctx, true, sig)
 		if err != nil {
 			continue
 		}
@@ -720,6 +855,11 @@ func (e *Executor) buildPumpFunBuy(sig *analyzer.TradeSignal, amountInLamports u
 	if err != nil {
 		return nil, err
 	}
+	// associated_bonding_curve is the bonding curve's token ATA, not the curve itself.
+	assocBondingCurve, _, err := solana.FindAssociatedTokenAddress(sig.Pool, sig.Mint)
+	if err != nil {
+		return nil, fmt.Errorf("find assoc bonding curve: %w", err)
+	}
 
 	pumpProg := solana.MustPublicKeyFromBase58(e.cfg.PumpFunProgram)
 	globalPDA, _, _ := solana.FindProgramAddress([][]byte{[]byte("global")}, pumpProg)
@@ -734,8 +874,8 @@ func (e *Executor) buildPumpFunBuy(sig *analyzer.TradeSignal, amountInLamports u
 		{PublicKey: globalPDA, IsSigner: false, IsWritable: false},
 		{PublicKey: pumpFunFeeRecipient, IsSigner: false, IsWritable: true},
 		{PublicKey: sig.Mint, IsSigner: false, IsWritable: false},
-		{PublicKey: sig.Pool, IsSigner: false, IsWritable: true},     // bonding_curve
-		{PublicKey: sig.BaseVault, IsSigner: false, IsWritable: true}, // associated_bonding_curve (token ATA)
+		{PublicKey: sig.Pool, IsSigner: false, IsWritable: true},           // bonding_curve
+		{PublicKey: assocBondingCurve, IsSigner: false, IsWritable: true},  // associated_bonding_curve (token ATA)
 		{PublicKey: userTokenAcc, IsSigner: false, IsWritable: true},
 		{PublicKey: e.wallet.PublicKey(), IsSigner: true, IsWritable: true},
 		{PublicKey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
@@ -754,6 +894,11 @@ func (e *Executor) buildPumpFunSell(sig *analyzer.TradeSignal, tokenAmount uint6
 	if err != nil {
 		return nil, err
 	}
+	// associated_bonding_curve is the bonding curve's token ATA, not the curve itself.
+	assocBondingCurve, _, err := solana.FindAssociatedTokenAddress(sig.Pool, sig.Mint)
+	if err != nil {
+		return nil, fmt.Errorf("find assoc bonding curve: %w", err)
+	}
 
 	pumpProg := solana.MustPublicKeyFromBase58(e.cfg.PumpFunProgram)
 	globalPDA, _, _ := solana.FindProgramAddress([][]byte{[]byte("global")}, pumpProg)
@@ -768,8 +913,8 @@ func (e *Executor) buildPumpFunSell(sig *analyzer.TradeSignal, tokenAmount uint6
 		{PublicKey: globalPDA, IsSigner: false, IsWritable: false},
 		{PublicKey: pumpFunFeeRecipient, IsSigner: false, IsWritable: true},
 		{PublicKey: sig.Mint, IsSigner: false, IsWritable: false},
-		{PublicKey: sig.Pool, IsSigner: false, IsWritable: true},
-		{PublicKey: sig.BaseVault, IsSigner: false, IsWritable: true},
+		{PublicKey: sig.Pool, IsSigner: false, IsWritable: true},           // bonding_curve
+		{PublicKey: assocBondingCurve, IsSigner: false, IsWritable: true},  // associated_bonding_curve (token ATA)
 		{PublicKey: userTokenAcc, IsSigner: false, IsWritable: true},
 		{PublicKey: e.wallet.PublicKey(), IsSigner: true, IsWritable: true},
 		{PublicKey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
@@ -787,15 +932,16 @@ func (e *Executor) buildPumpFunSell(sig *analyzer.TradeSignal, tokenAmount uint6
 // market accounts needed for the swap instruction.
 //
 // AMM V4 state byte offsets (from raydium-amm program source):
-//   280: open_orders     (32)
-//   312: serum_program   (32)
-//   344: serum_market    (32)
-//   376: serum_bids      (32)
-//   408: serum_asks      (32)
-//   440: serum_event_q   (32)
-//   472: serum_coin_vault(32)
-//   504: serum_pc_vault  (32)
-//   536: serum_vault_sign(32)
+//
+//	280: open_orders     (32)
+//	312: serum_program   (32)
+//	344: serum_market    (32)
+//	376: serum_bids      (32)
+//	408: serum_asks      (32)
+//	440: serum_event_q   (32)
+//	472: serum_coin_vault(32)
+//	504: serum_pc_vault  (32)
+//	536: serum_vault_sign(32)
 func (e *Executor) fetchRaydiumPoolAccounts(ctx context.Context, ammID solana.PublicKey) (
 	openOrders, serumProg, serumMarket, serumBids, serumAsks, serumEventQ, serumCoinVault, serumPCVault, serumVaultSigner solana.PublicKey, err error,
 ) {
@@ -819,20 +965,9 @@ func (e *Executor) fetchRaydiumPoolAccounts(ctx context.Context, ammID solana.Pu
 	return
 }
 
-// readVaultBalances fetches current pool reserves for the monitor loop.
-func (e *Executor) readVaultBalances(ctx context.Context, baseVault, quoteVault solana.PublicKey, source string) (reserveBase, reserveQuote uint64, err error) {
-	if source == "pump_fun" {
-		baseResult, err := e.rpc.GetTokenAccountBalance(ctx, baseVault, rpc.CommitmentConfirmed)
-		if err != nil {
-			return 0, 0, err
-		}
-		baseAmt, _ := strconv.ParseUint(baseResult.Value.Amount, 10, 64)
-		quoteResult, err := e.rpc.GetBalance(ctx, quoteVault, rpc.CommitmentConfirmed)
-		if err != nil {
-			return 0, 0, err
-		}
-		return baseAmt, quoteResult.Value, nil
-	}
+// readVaultBalances fetches current pool reserves for Raydium vault accounts.
+// Pump.fun positions are monitored via pumpFunSellQuote, not this function.
+func (e *Executor) readVaultBalances(ctx context.Context, baseVault, quoteVault solana.PublicKey) (reserveBase, reserveQuote uint64, err error) {
 	baseResult, err := e.rpc.GetTokenAccountBalance(ctx, baseVault, rpc.CommitmentConfirmed)
 	if err != nil {
 		return 0, 0, err
@@ -844,6 +979,33 @@ func (e *Executor) readVaultBalances(ctx context.Context, baseVault, quoteVault 
 	bAmt, _ := strconv.ParseUint(baseResult.Value.Amount, 10, 64)
 	qAmt, _ := strconv.ParseUint(quoteResult.Value.Amount, 10, 64)
 	return bAmt, qAmt, nil
+}
+
+// ─── Pump.fun bonding curve pricing ──────────────────────────────────────────
+
+// pumpFunSellQuote returns the estimated SOL received (in SOL, not lamports)
+// for selling tokensIn raw token units into the Pump.fun bonding curve, given
+// the current real SOL balance of the bonding curve account (in lamports).
+//
+// Uses the same virtual reserve constants as the analyzer's pumpFunSimulate.
+// This is the SELL direction only (tokens → SOL); no round-trip.
+func pumpFunSellQuote(realSolLamports float64, tokensIn float64) float64 {
+	const (
+		virtualSolF    = float64(30_000_000_000)        // 30 SOL in lamports
+		virtualTokensF = float64(1_073_000_000_000_000) // protocol constant (6 decimals)
+		feeMul         = float64(9900)                  // 1% Pump.fun fee
+		feeDen         = float64(10000)
+	)
+	if tokensIn <= 0 || realSolLamports < 0 {
+		return 0
+	}
+	k := virtualSolF * virtualTokensF
+	rq := virtualSolF + realSolLamports // total lamports in quote reserve
+	rb := k / rq                        // effective token reserve
+
+	inFee := tokensIn * feeMul
+	solOut := inFee * rq / (rb*feeDen + inFee)
+	return solOut / 1e9 // lamports → SOL
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
