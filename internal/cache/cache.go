@@ -48,6 +48,14 @@ func (c *Client) MarkTokenSeen(ctx context.Context, tokenAddr string) error {
 	return c.rdb.Set(ctx, seenKey(tokenAddr), time.Now().Unix(), 48*time.Hour).Err()
 }
 
+// TryMarkTokenSeen atomically marks a token as seen using SET NX.
+// Returns (true, nil) on the first call for this token — caller should proceed.
+// Returns (false, nil) if the token was already seen — caller should skip.
+// This eliminates the TOCTOU race between IsSeenToken + MarkTokenSeen.
+func (c *Client) TryMarkTokenSeen(ctx context.Context, tokenAddr string) (bool, error) {
+	return c.rdb.SetNX(ctx, seenKey(tokenAddr), time.Now().Unix(), 48*time.Hour).Result()
+}
+
 func seenKey(addr string) string { return "seen:token:" + addr }
 
 // ─── Kill switch ──────────────────────────────────────────────────────────────

@@ -100,4 +100,16 @@ var (
 		Name: "sniper_entry_price_impact_pct",
 		Help: "Price impact of the last simulated buy entry as a percentage.",
 	})
+
+	// SignalsDropped counts TradeSignals discarded because tradeCh was full.
+	SignalsDropped = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "sniper_signals_dropped_total",
+		Help: "TradeSignals dropped due to a full tradeCh buffer (executor too slow).",
+	})
+
+	// AnalyzerPanics counts recovered panics inside the per-token process() goroutine.
+	AnalyzerPanics = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "sniper_analyzer_panics_total",
+		Help: "Panics recovered inside analyzer.process() — indicates malformed on-chain data.",
+	})
 )

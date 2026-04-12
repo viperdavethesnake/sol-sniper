@@ -26,6 +26,14 @@ type Metadata struct {
 	IsPumpFun      bool    `json:"is_pump_fun"`      // true for Pump.fun bonding curve tokens
 	PriorityTipSOL float64 `json:"priority_tip_sol"` // Jito tip paid in SOL (0 if not executed)
 	BundleLanded   bool    `json:"bundle_landed"`    // whether the Jito bundle was confirmed on-chain
+
+	// Fields added for ML feature richness.
+	MintDecimals       uint8   `json:"mint_decimals"`                  // SPL token decimal places
+	TopHoldersPct      float64 `json:"top_holders_pct"`                // % supply held by top-2 accounts
+	HoldersCount       int     `json:"holders_count"`                  // len(GetTokenLargestAccounts result)
+	SlotAtDetection    uint64  `json:"slot_at_detection"`              // Solana slot when event was received
+	DetectionLatencyMs int64   `json:"detection_latency_ms"`           // ms from listener emit to analyzer decision
+	SolToGraduation    float64 `json:"sol_to_graduation,omitempty"`    // Pump.fun only: SOL needed to graduate (85 − real_sol)
 }
 
 // Execution holds the simulated entry quote computed before opening a position.

@@ -2,14 +2,15 @@
 // TradeSignals for tokens that pass all filters.
 //
 // Safety pipeline (in order):
-//  1. Deduplication (Redis 48h)
-//  2. Freeze authority check  — freezeAuthority must be null
-//  3. Mint authority check    — mintAuthority must be renounced
-//  4. Liquidity threshold     — must have ≥ MinLiqSOL in pool
-//  5. Holder concentration    — top 2 holders must not control > 80% supply
-//  6. Token metadata          — fetch symbol via Metaplex DAS
-//  7. Friction simulation     — offline constant-product round-trip estimate
-//  8. Entry quote             — compute TokensOut and price impact
+//  1. Deduplication       — Redis 48h, atomic SET NX
+//  2. Freeze authority    — freezeAuthority must be null
+//  3. Mint authority      — mintAuthority must be renounced
+//  4. Liquidity threshold — ≥ MinLiqSOL in pool
+//  5. Graduation guard    — Pump.fun tokens ≥ 70 SOL are near migration; skip
+//  6. Holder concentration — top-2 holders must not control > 80% supply
+//  7. Token metadata      — fetch symbol via Metaplex PDA
+//  8. Friction simulation — offline round-trip estimate (protocol-aware)
+//  9. Emit TradeSignal + PASSED_ANALYSIS JSONL record
 package analyzer
 
 import (
@@ -31,6 +32,16 @@ import (
 	"github.com/sol-sniper/bot/internal/listener"
 	"github.com/sol-sniper/bot/internal/metrics"
 )
+
+// pumpGraduationSOL is the approximate bonding-curve SOL balance at which
+// Pump.fun migrates to Raydium. Tokens near this threshold face a brief
+// un-sellable window and price gap during migration.
+const pumpGraduationSOL = 85.0
+
+// pumpGraduationGuardSOL is the liquidity level above which we skip the token.
+// Set 15 SOL below graduation to avoid entering a position that may graduate
+// before our monitor cycle has a chance to exit.
+const pumpGraduationGuardSOL = 70.0
 
 // Metaplex token metadata program ID.
 var metaplexMetadataProg = solana.MustPublicKeyFromBase58("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
@@ -91,23 +102,48 @@ func (a *Analyzer) Run(ctx context.Context, eventCh <-chan *listener.TokenEvent)
 
 // process runs the full analysis pipeline for a single token event.
 func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
+	// Per-token deadline prevents goroutine leaks when RPC stalls.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	start := time.Now()
 	mintStr := ev.Mint.String()
 
+	// Recover from unexpected panics (malformed on-chain data, nil pointer, etc.)
+	// so a single bad token doesn't silently kill this goroutine.
+	defer func() {
+		if r := recover(); r != nil {
+			metrics.AnalyzerPanics.Inc()
+			log.Error().Interface("panic", r).Str("mint", mintStr).Msg("analyzer: panic recovered")
+		}
+	}()
 	defer func() {
 		metrics.AnalysisDuration.Observe(time.Since(start).Seconds())
 	}()
 
-	// ── 1. Deduplication ─────────────────────────────────────────────────────
-	seen, err := a.cache.IsSeenToken(ctx, mintStr)
+	// ── 1. Deduplication (atomic SET NX — eliminates TOCTOU race) ────────────
+	isNew, err := a.cache.TryMarkTokenSeen(ctx, mintStr)
 	if err != nil {
 		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: dedup check failed")
 	}
-	if seen {
+	if !isNew {
 		return
 	}
-	_ = a.cache.MarkTokenSeen(ctx, mintStr)
 	_ = a.cache.Incr(ctx, "scanned")
+
+	// Build metadata progressively — the reject closure captures it so every
+	// JSONL record has all the features measured up to the point of rejection.
+	meta := dataset.Metadata{
+		DEX:                dexLabel(ev.Source),
+		InitLiqSOL:         ev.LiqSOL,
+		IsPumpFun:          ev.Source == "pump_fun",
+		SlotAtDetection:    ev.Slot,
+		DetectionLatencyMs: time.Since(ev.DetectedAt).Milliseconds(),
+	}
+
+	// execData is nil until after friction simulation; the reject closure captures
+	// it so that high_friction records include the full Execution block.
+	var execData *dataset.Execution
 
 	reject := func(reason string) {
 		metrics.TokensFiltered.WithLabelValues(reason).Inc()
@@ -117,13 +153,10 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 			a.dw.Write(dataset.Record{
 				ScannedAt:    ev.DetectedAt,
 				TokenAddress: mintStr,
-				Metadata: dataset.Metadata{
-					DEX:       dexLabel(ev.Source),
-					InitLiqSOL: ev.LiqSOL,
-					IsPumpFun: ev.Source == "pump_fun",
-				},
-				Trajectory: []dataset.TrajectoryPoint{},
-				FinalLabel: "REJECTED_" + reason,
+				Metadata:     meta,
+				Execution:    execData,
+				Trajectory:   []dataset.TrajectoryPoint{},
+				FinalLabel:   "REJECTED_" + reason,
 			})
 		}
 	}
@@ -135,6 +168,10 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		reject("mint_fetch_error")
 		return
 	}
+	// Populate mint-derived fields even before the authority checks so that
+	// reject records for freeze/mint-authority violations include them.
+	meta.MintDecimals = mintInfo.Decimals
+	meta.IsRenounced = mintInfo.MintAuthorityOption == 0
 
 	// FreezeAuthorityOption == 1 means freeze authority is set (danger).
 	if mintInfo.FreezeAuthorityOption != 0 {
@@ -154,50 +191,96 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		return
 	}
 
-	// ── 4. Holder concentration ───────────────────────────────────────────────
-	if rugged, err := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply); err != nil {
+	// ── 4. Graduation guard (Pump.fun only) ───────────────────────────────────
+	// Tokens ≥ 70 SOL are within 15 SOL of the migration threshold (~85 SOL).
+	// They face a brief un-sellable window and price gap during migration, making
+	// them unsuitable for short-hold paper trades.
+	if ev.Source == "pump_fun" {
+		solToGrad := pumpGraduationSOL - ev.LiqSOL
+		if solToGrad < 0 {
+			solToGrad = 0
+		}
+		meta.SolToGraduation = solToGrad
+		if ev.LiqSOL >= pumpGraduationGuardSOL {
+			reject("near_graduation")
+			return
+		}
+	}
+
+	// ── 5. Holder concentration ───────────────────────────────────────────────
+	rugged, holdersPct, holdersCount, err := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply)
+	meta.TopHoldersPct = holdersPct
+	meta.HoldersCount = holdersCount
+	if err != nil {
 		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: holder check failed")
 	} else if rugged {
 		reject("rug_concentration")
 		return
 	}
 
-	// ── 5. Token metadata ─────────────────────────────────────────────────────
+	// ── 6. Token metadata ─────────────────────────────────────────────────────
 	symbol := a.fetchSymbol(ctx, ev.Mint)
+	meta.Symbol = symbol
 
-	// ── 6 & 7. Vault balances + friction simulation ───────────────────────────
-	// For Raydium: fetch vault token accounts from on-chain pool state.
-	// For Pump.fun: bonding curve holds SOL directly (ev.Pool is the curve).
-	baseVault, quoteVault, err := a.resolveVaults(ctx, ev)
-	if err != nil {
-		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault resolution failed")
-		reject("vault_read_error")
-		return
-	}
-
-	reserveBase, reserveQuote, err := a.readVaultBalances(ctx, baseVault, quoteVault, ev.Source, ev.LiqSOL)
-	if err != nil {
-		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault balance read failed")
-		reject("vault_read_error")
-		return
-	}
-
-	// Offline constant-product round-trip simulation (buy then immediate sell).
-	// Uses Raydium V4 fee: 0.25% (9975/10000).
+	// ── 7. Vault balances + friction simulation ───────────────────────────────
 	buyLamports := a.cfg.MaxBuyLamports()
-	frictionScore := simulateRoundTrip(reserveBase, reserveQuote, buyLamports)
+
+	var (
+		tokensOut      uint64
+		frictionScore  float64
+		priceImpactPct float64
+		baseVault      solana.PublicKey
+		quoteVault     solana.PublicKey
+	)
+
+	if ev.Source == "pump_fun" {
+		// Pump.fun uses virtual reserves — no on-chain vault reads required.
+		// All arithmetic is float64 to avoid uint64 overflow
+		// (virtual_sol × virtual_tokens ≈ 3.2e25 > uint64 max of 1.84e19).
+		tokensOut, frictionScore, priceImpactPct = pumpFunSimulate(ev.LiqSOL, buyLamports)
+		baseVault = ev.Pool
+		quoteVault = ev.Pool
+	} else {
+		// Raydium: read vault balances from on-chain pool state account.
+		baseVault, quoteVault, err = a.resolveVaults(ctx, ev)
+		if err != nil {
+			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault resolution failed")
+			reject("vault_read_error")
+			return
+		}
+		var reserveBase, reserveQuote uint64
+		reserveBase, reserveQuote, err = a.readVaultBalances(ctx, baseVault, quoteVault)
+		if err != nil {
+			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault balance read failed")
+			reject("vault_read_error")
+			return
+		}
+		frictionScore = simulateRoundTrip(reserveBase, reserveQuote, buyLamports)
+		tokensOut, priceImpactPct = quoteEntry(reserveBase, reserveQuote, buyLamports)
+	}
+
 	metrics.FrictionScore.Set(frictionScore)
+	metrics.EntryPriceImpact.Set(priceImpactPct)
+
+	// Populate execution data before the friction check so the JSONL record is
+	// complete even when a high_friction reject fires.
+	var entryPriceSOL float64
+	if tokensOut > 0 {
+		entryPriceSOL = float64(buyLamports) / float64(tokensOut) / 1e9
+	}
+	execData = &dataset.Execution{
+		EntryTokensRaw: fmt.Sprintf("%d", tokensOut),
+		EntryPriceSOL:  entryPriceSOL,
+		PriceImpactPct: priceImpactPct,
+		FrictionScore:  frictionScore,
+	}
 
 	if a.cfg.MaxFrictionPct > 0 && frictionScore > a.cfg.MaxFrictionPct {
 		reject("high_friction")
 		return
 	}
 
-	// ── 8. Entry quote ────────────────────────────────────────────────────────
-	tokensOut, priceImpactPct := quoteEntry(reserveBase, reserveQuote, buyLamports)
-	metrics.EntryPriceImpact.Set(priceImpactPct)
-
-	// ── Emit TradeSignal ──────────────────────────────────────────────────────
+	// ── 8. Emit TradeSignal ───────────────────────────────────────────────────
 	sig := &TradeSignal{
 		Mint:                ev.Mint,
 		Pool:                ev.Pool,
@@ -221,9 +304,24 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		Float64("friction_pct", frictionScore).
 		Msg("analyzer: trade signal emitted")
 
+	// Write PASSED_ANALYSIS record before sending to tradeCh — ensures positive
+	// examples are captured in the dataset even if the executor crashes or drops
+	// the position. Executor will write a second record with outcome + trajectory.
+	if a.dw != nil {
+		a.dw.Write(dataset.Record{
+			ScannedAt:    ev.DetectedAt,
+			TokenAddress: mintStr,
+			Metadata:     meta,
+			Execution:    execData,
+			Trajectory:   []dataset.TrajectoryPoint{},
+			FinalLabel:   "PASSED_ANALYSIS",
+		})
+	}
+
 	select {
 	case a.tradeCh <- sig:
 	default:
+		metrics.SignalsDropped.Inc()
 		log.Warn().Str("mint", mintStr).Msg("analyzer: tradeCh full — dropping signal")
 	}
 }
@@ -293,21 +391,22 @@ func (a *Analyzer) getAccountBytes(ctx context.Context, pubkey solana.PublicKey)
 
 // ─── Holder concentration ─────────────────────────────────────────────────────
 
-// isConcentrated returns true if the top 2 token holders control more than 80%
-// of the circulating supply (excluding the bonding curve and null addresses).
-func (a *Analyzer) isConcentrated(ctx context.Context, mint solana.PublicKey, totalSupply uint64) (bool, error) {
+// isConcentrated returns whether the top-2 holders control > 80% of supply,
+// the raw percentage, the number of large accounts returned, and any error.
+// Returns (false, 0, 0, nil) on empty supply or missing data.
+func (a *Analyzer) isConcentrated(ctx context.Context, mint solana.PublicKey, totalSupply uint64) (rugged bool, topPct float64, count int, err error) {
 	if totalSupply == 0 {
-		return false, nil
+		return false, 0, 0, nil
 	}
 	result, err := a.rpc.GetTokenLargestAccounts(ctx, mint, rpc.CommitmentConfirmed)
 	if err != nil {
-		return false, err
+		return false, 0, 0, err
 	}
 	if result == nil || len(result.Value) == 0 {
-		return false, nil
+		return false, 0, 0, nil
 	}
 
-	// Sum the top 2 balances.
+	count = len(result.Value)
 	top := result.Value
 	n := 2
 	if len(top) < n {
@@ -318,23 +417,16 @@ func (a *Analyzer) isConcentrated(ctx context.Context, mint solana.PublicKey, to
 		amt, _ := strconv.ParseUint(top[i].Amount, 10, 64)
 		topSum += amt
 	}
-	pct := float64(topSum) / float64(totalSupply) * 100
-	return pct > 80, nil
+	topPct = float64(topSum) / float64(totalSupply) * 100
+	return topPct > 80, topPct, count, nil
 }
 
-// ─── Vault resolution ─────────────────────────────────────────────────────────
+// ─── Vault resolution (Raydium only) ─────────────────────────────────────────
 
-// resolveVaults returns the base (token) and quote (WSOL) vault public keys.
-// For Raydium we read the AMM state account; for Pump.fun we derive the
-// associated token accounts from the bonding curve.
+// resolveVaults returns the base (token) and quote (WSOL) vault public keys
+// from the Raydium AMM V4 pool state account.
+// Only called for Raydium events; Pump.fun uses pumpFunSimulate instead.
 func (a *Analyzer) resolveVaults(ctx context.Context, ev *listener.TokenEvent) (baseVault, quoteVault solana.PublicKey, err error) {
-	if ev.Source == "pump_fun" {
-		// Pump.fun uses virtual reserves — no on-chain vault accounts to resolve.
-		// Synthetic reserves are derived from protocol constants + ev.LiqSOL in
-		// readVaultBalances; return the bonding curve as a sentinel.
-		return ev.Pool, ev.Pool, nil
-	}
-
 	// Raydium AMM V4: pool state account contains coinVaultKey and pcVaultKey.
 	// Layout offsets (bytes):
 	//   status:      0-7   (u64)
@@ -348,7 +440,7 @@ func (a *Analyzer) resolveVaults(ctx context.Context, ev *listener.TokenEvent) (
 		return solana.PublicKey{}, solana.PublicKey{}, err
 	}
 	if len(data) < 400 {
-		return solana.PublicKey{}, solana.PublicKey{}, nil
+		return solana.PublicKey{}, solana.PublicKey{}, fmt.Errorf("pool state account too short: %d bytes (want ≥400)", len(data))
 	}
 
 	copy(baseVault[:], data[336:368])
@@ -356,27 +448,12 @@ func (a *Analyzer) resolveVaults(ctx context.Context, ev *listener.TokenEvent) (
 	return baseVault, quoteVault, nil
 }
 
-// ─── Vault balances ───────────────────────────────────────────────────────────
+// ─── Vault balances (Raydium only) ───────────────────────────────────────────
 
-// readVaultBalances returns the current token reserves for the base and quote vaults.
+// readVaultBalances returns the current token reserves for Raydium vault accounts.
 // reserveBase is in raw token units; reserveQuote is in lamports.
-// liqSOL is the bonding curve SOL balance captured at detection (Pump.fun only).
-func (a *Analyzer) readVaultBalances(ctx context.Context, baseVault, quoteVault solana.PublicKey, source string, liqSOL float64) (reserveBase, reserveQuote uint64, err error) {
-	if source == "pump_fun" {
-		// Pump.fun prices using virtual reserves (published protocol constants):
-		//   VIRTUAL_SOL_RESERVES   = 30 SOL  (added to real SOL for all price calcs)
-		//   VIRTUAL_TOKEN_RESERVES = 1,073,000,191 tokens × 10^6 decimals
-		// At token creation the curve holds virtually all token supply, so
-		// reserveBase ≈ VIRTUAL_TOKEN_RESERVES. reserveQuote = virtual + real SOL.
-		// No RPC calls needed — liqSOL is already captured by the listener.
-		const virtualSolLamports = uint64(30_000_000_000)
-		const virtualTokenUnits  = uint64(1_073_000_191_000_000)
-		reserveBase  = virtualTokenUnits
-		reserveQuote = virtualSolLamports + uint64(liqSOL*1e9)
-		return reserveBase, reserveQuote, nil
-	}
-
-	// Raydium: both vaults are SPL token accounts.
+// Pump.fun reserves are computed by pumpFunSimulate without any RPC calls.
+func (a *Analyzer) readVaultBalances(ctx context.Context, baseVault, quoteVault solana.PublicKey) (reserveBase, reserveQuote uint64, err error) {
 	baseResult, err := a.rpc.GetTokenAccountBalance(ctx, baseVault, rpc.CommitmentConfirmed)
 	if err != nil {
 		return 0, 0, err
@@ -391,7 +468,63 @@ func (a *Analyzer) readVaultBalances(ctx context.Context, baseVault, quoteVault 
 	return baseAmt, quoteAmt, nil
 }
 
-// ─── Constant-product maths ───────────────────────────────────────────────────
+// ─── Pump.fun bonding curve simulation ───────────────────────────────────────
+
+// pumpFunSimulate computes tokensOut, friction score, and price impact for a
+// Pump.fun bonding curve buy, using the protocol's published virtual reserve
+// constants. All arithmetic is float64 to avoid uint64 overflow
+// (virtual_sol × virtual_tokens ≈ 3.2e25, which exceeds uint64 max of ~1.84e19).
+//
+// Protocol constants (from pump.fun source):
+//
+//	VIRTUAL_SOL_RESERVES   = 30 SOL = 30,000,000,000 lamports
+//	VIRTUAL_TOKEN_RESERVES = 1,073,000,000,000,000 raw units (6 decimal places)
+//	FEE_BASIS_POINTS       = 100 (1%)
+func pumpFunSimulate(liqSOL float64, buyLamports uint64) (tokensOut uint64, frictionScore float64, priceImpactPct float64) {
+	const (
+		virtualSolF    = float64(30_000_000_000)        // 30 SOL in lamports
+		virtualTokensF = float64(1_073_000_000_000_000) // protocol constant (6 decimals)
+		feeMul         = float64(9900)                  // 100 - 100 basis points = 1% fee
+		feeDen         = float64(10000)
+	)
+
+	// k is the constant product; real quote reserve = virtual + actual SOL in curve.
+	k := virtualSolF * virtualTokensF
+	rq := virtualSolF + liqSOL*1e9 // total lamports in quote reserve
+	rb := k / rq                   // effective token reserve (decreases as curve fills)
+
+	buy := float64(buyLamports)
+
+	// Forward swap: SOL → tokens with 1% fee applied to input.
+	inFee := buy * feeMul
+	tOut := inFee * rb / (rq*feeDen + inFee)
+	if tOut <= 0 {
+		return 0, 100, 100
+	}
+
+	// Reverse swap: tokens → SOL on the post-buy reserves.
+	rb2 := rb - tOut
+	rq2 := rq + buy
+	inFee2 := tOut * feeMul
+	solOut := inFee2 * rq2 / (rb2*feeDen + inFee2)
+
+	friction := (buy - solOut) / buy * 100
+	if friction < 0 {
+		friction = 0
+	}
+
+	// Price impact: (execution price − spot price) / spot price × 100.
+	midPrice := rq / rb     // lamports per token unit (pre-trade spot)
+	execPrice := buy / tOut // lamports per token unit (this execution)
+	impact := (execPrice - midPrice) / midPrice * 100
+	if impact < 0 {
+		impact = 0
+	}
+
+	return uint64(tOut), friction, impact
+}
+
+// ─── Constant-product maths (Raydium) ────────────────────────────────────────
 
 // cpAmountOut applies the constant-product formula with Raydium's 0.25% fee.
 //
@@ -410,7 +543,7 @@ func cpAmountOut(amountIn, reserveIn, reserveOut uint64) uint64 {
 }
 
 // simulateRoundTrip returns the percentage loss of a buy-then-sell round trip.
-// amountIn is in lamports (SOL).
+// amountIn is in lamports (SOL). Uses Raydium 0.25% fee.
 func simulateRoundTrip(reserveBase, reserveQuote, amountInLamports uint64) float64 {
 	if reserveBase == 0 || reserveQuote == 0 || amountInLamports == 0 {
 		return 100
@@ -433,7 +566,7 @@ func simulateRoundTrip(reserveBase, reserveQuote, amountInLamports uint64) float
 }
 
 // quoteEntry returns (tokensOut, priceImpactPct) for a buy of amountInLamports.
-// priceImpact = (midPrice - executionPrice) / midPrice * 100.
+// priceImpact = (executionPrice - midPrice) / midPrice * 100. Uses Raydium 0.25% fee.
 func quoteEntry(reserveBase, reserveQuote, amountInLamports uint64) (tokensOut uint64, priceImpactPct float64) {
 	tokensOut = cpAmountOut(amountInLamports, reserveQuote, reserveBase)
 	if tokensOut == 0 || reserveBase == 0 || reserveQuote == 0 {
