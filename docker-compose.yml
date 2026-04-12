@@ -1,0 +1,91 @@
+name: sol-sniper
+
+# IP assignment: 192.168.33.212 (macvlan_net)
+# redis owns the macvlan interface; all other services share its network
+# namespace via network_mode: service:redis.
+#
+# External access (no host port mapping needed):
+#   Bot API    http://192.168.33.212:8080
+#   Prometheus http://192.168.33.212:9090
+#   Grafana    http://192.168.33.212:3000
+
+services:
+
+  # ── Network anchor ───────────────────────────────────────────────────────────
+  # redis owns the macvlan IP; every other service rides its namespace.
+
+  redis:
+    image: redis:7-alpine
+    container_name: sol-sniper-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      macvlan_net:
+        ipv4_address: 192.168.33.212
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Bot ──────────────────────────────────────────────────────────────────────
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sol-sniper-bot
+    env_file: .env
+    network_mode: service:redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/data   # JSONL training dataset written here
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Monitoring ───────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sol-sniper-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./data/prometheus:/prometheus
+    network_mode: service:redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sol-sniper-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
+    network_mode: service:redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  macvlan_net:
+    external: true
+
+# All named volumes replaced with bind mounts under ./data/

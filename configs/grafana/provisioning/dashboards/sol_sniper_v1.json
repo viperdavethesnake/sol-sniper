@@ -1,0 +1,697 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "schemaVersion": 38,
+  "title": "Sol Sniper — SS-V1",
+  "uid": "sol-sniper-01",
+  "version": 2,
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "P&L (SOL)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          },
+          "color": { "mode": "thresholds" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_pnl_sol", "legendFormat": "P&L SOL", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 2,
+      "title": "Active Positions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 5, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_active_positions", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 3,
+      "title": "Snipes Attempted",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 8, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_snipes_attempted_total", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 4,
+      "title": "Bundle Land Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 11, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          },
+          "color": { "mode": "thresholds" },
+          "mappings": []
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * sniper_snipes_successful_total / clamp_min(sniper_snipes_attempted_total, 1)",
+          "legendFormat": "Land Rate %",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 5,
+      "title": "Last Jito Tip (SOL)",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 4, "x": 14, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 5,
+          "min": 0,
+          "max": 0.01,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.003 },
+              { "color": "red", "value": 0.007 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "targets": [{ "expr": "sniper_jito_tip_sol", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 6,
+      "title": "Rugs Dodged",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "yellow", "mode": "fixed" },
+          "mappings": []
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(sniper_tokens_filtered_total{reason=~\"freeze_authority_set|mint_authority_set|rug_concentration\"})",
+          "legendFormat": "Rugs Dodged",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 7,
+      "title": "WS Reconnections",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "color": { "mode": "thresholds" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_ws_reconnections_total", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 8,
+      "title": "Pipeline Throughput (per minute)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "spanNulls": false }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Landed / min" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 3 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Attempted / min" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Scanned / min" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(sniper_tokens_scanned_total[1m]) * 60",
+          "legendFormat": "Scanned / min",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(sniper_snipes_attempted_total[1m]) * 60",
+          "legendFormat": "Attempted / min",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(sniper_snipes_successful_total[1m]) * 60",
+          "legendFormat": "Landed / min",
+          "refId": "C"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 9,
+      "title": "Filter Breakdown — Rate by Reason",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 20, "spanNulls": false }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(sniper_tokens_filtered_total[2m]) * 120",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 10,
+      "title": "Jito Tip (SOL) Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 5,
+          "custom": { "lineWidth": 2, "spanNulls": false },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.003 },
+              { "color": "red", "value": 0.007 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sniper_jito_tip_sol",
+          "legendFormat": "Jito Tip (SOL)",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 11,
+      "title": "Analysis Latency — p50 / p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "spanNulls": false },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(sniper_analysis_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(sniper_analysis_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 12,
+      "title": "Execution Latency (Jito Submit) — p50 / p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "spanNulls": false },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.25 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(sniper_execution_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(sniper_execution_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 13,
+      "title": "Sells by Trigger",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "spanNulls": false }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "take_profit" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "stop_loss" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "kill_switch" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(sniper_sells_executed_total[5m]) * 300",
+          "legendFormat": "{{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 14,
+      "title": "Filter Reason Breakdown (Cumulative)",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by(reason) (sniper_tokens_filtered_total)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 15,
+      "title": "Why We Filtered (Filter Reasons)",
+      "type": "piechart",
+      "gridPos": { "h": 10, "w": 9, "x": 0, "y": 36 },
+      "options": {
+        "pieType": "pie",
+        "tooltip": { "mode": "multi" },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by(reason) (sniper_tokens_filtered_total)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 16,
+      "title": "Position Exits by Type",
+      "type": "piechart",
+      "gridPos": { "h": 10, "w": 9, "x": 9, "y": 36 },
+      "options": {
+        "pieType": "pie",
+        "tooltip": { "mode": "multi" },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "take_profit" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "stop_loss" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "kill_switch" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "timeout" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "grey", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by(trigger) (sniper_sells_executed_total)",
+          "legendFormat": "{{trigger}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 17,
+      "title": "Entry Price Impact (last token)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 36 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "color": { "mode": "thresholds" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_entry_price_impact_pct", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 18,
+      "title": "Friction Score (last token, %)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 41 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 15 }
+            ]
+          },
+          "color": { "mode": "thresholds" },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "sniper_friction_score_last", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 19,
+      "title": "Entry Price Impact Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 46 },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": { "lineWidth": 2, "spanNulls": false },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sniper_entry_price_impact_pct",
+          "legendFormat": "Price Impact %",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 20,
+      "title": "Jito Tip Success Ratio (bundle landed / tip paid)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 46 },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "lineWidth": 2, "spanNulls": false },
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.4 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sniper_jito_tip_success_ratio",
+          "legendFormat": "Tip→Land Ratio",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    }
+
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "refresh": "10s"
+}
