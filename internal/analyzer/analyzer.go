@@ -248,7 +248,8 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		} else if tipMul > 5.0 {
 			tipMul = 5.0
 		}
-		tipPct := 0.001 * tipMul * 1e9 / float64(buyLamports) * 100
+		// ×2: buy bundle tip + sell bundle tip are both paid in a real round-trip.
+		tipPct := 2.0 * 0.001 * tipMul * 1e9 / float64(buyLamports) * 100
 		frictionScore += tipPct
 
 		baseVault = ev.Pool
