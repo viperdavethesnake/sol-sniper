@@ -242,6 +242,7 @@ func (l *Listener) handleRaydium(ctx context.Context, result *ws.LogResult) {
 	}
 
 	metrics.TokensScanned.Inc()
+	metrics.TokensScannedBySource.WithLabelValues("raydium").Inc()
 	select {
 	case l.eventCh <- ev:
 	default:
@@ -340,6 +341,7 @@ func (l *Listener) handlePumpFun(ctx context.Context, result *ws.LogResult) {
 	}
 
 	metrics.TokensScanned.Inc()
+	metrics.TokensScannedBySource.WithLabelValues("pump_fun").Inc()
 	select {
 	case l.eventCh <- ev:
 	default:

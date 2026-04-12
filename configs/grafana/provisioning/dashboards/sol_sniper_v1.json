@@ -7,7 +7,7 @@
   "schemaVersion": 38,
   "title": "Sol Sniper — SS-V1",
   "uid": "sol-sniper-01",
-  "version": 2,
+  "version": 3,
   "panels": [
 
     {
@@ -670,6 +670,314 @@
         {
           "expr": "sniper_jito_tip_success_ratio",
           "legendFormat": "Tip→Land Ratio",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 21,
+      "title": "Open Positions",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 },
+      "collapsed": false
+    },
+
+    {
+      "id": 22,
+      "title": "Live Positions",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 54 },
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "enablePagination": false },
+        "sortBy": [{ "displayName": "ROI %", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ROI %" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 2 },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "gradient" }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": -10 },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Current (SOL)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 4 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "SOL In" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 4 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Entry (SOL/tok)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 8 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Mint Address" },
+            "properties": [
+              { "id": "custom.width", "value": 120 },
+              {
+                "id": "links",
+                "value": [{
+                  "title": "View on Solscan",
+                  "url": "https://solscan.io/token/${__value.text}",
+                  "targetBlank": true
+                }]
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "refId": "A",
+          "type": "json",
+          "method": "GET",
+          "url": "http://localhost:8080/api/positions",
+          "root_selector": "positions",
+          "format": "table",
+          "columns": [
+            { "selector": "symbol",         "text": "Symbol",          "type": "string" },
+            { "selector": "token",          "text": "Mint Address",    "type": "string" },
+            { "selector": "source",         "text": "DEX",             "type": "string" },
+            { "selector": "opened_at",      "text": "Opened At",       "type": "string" },
+            { "selector": "sol_spent",      "text": "SOL In",          "type": "number" },
+            { "selector": "entry_price_sol","text": "Entry (SOL/tok)", "type": "number" },
+            { "selector": "tokens_in",      "text": "Tokens",          "type": "number" },
+            { "selector": "current_sol",    "text": "Current (SOL)",   "type": "number" },
+            { "selector": "roi_pct",        "text": "ROI %",           "type": "number" },
+            { "selector": "status",         "text": "Status",          "type": "string" }
+          ]
+        }
+      ],
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+    },
+
+    {
+      "id": 23,
+      "title": "Leaderboard",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 64 },
+      "collapsed": false
+    },
+
+    {
+      "id": 24,
+      "title": "Top Gainers",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "enablePagination": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "cellOptions": { "type": "auto" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "P&L (SOL)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 4 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "refId": "A",
+          "type": "json",
+          "method": "GET",
+          "url": "http://localhost:8080/api/leaderboard",
+          "root_selector": "top_gainers",
+          "format": "table",
+          "columns": [
+            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
+            { "selector": "token",     "text": "Mint",       "type": "string" },
+            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
+            { "selector": "trigger",   "text": "Exit",       "type": "string" },
+            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
+          ]
+        }
+      ],
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+    },
+
+    {
+      "id": 25,
+      "title": "Top Losers",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "enablePagination": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "cellOptions": { "type": "auto" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "P&L (SOL)" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 4 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": -0.01 }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "refId": "A",
+          "type": "json",
+          "method": "GET",
+          "url": "http://localhost:8080/api/leaderboard",
+          "root_selector": "top_losers",
+          "format": "table",
+          "columns": [
+            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
+            { "selector": "token",     "text": "Mint",       "type": "string" },
+            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
+            { "selector": "trigger",   "text": "Exit",       "type": "string" },
+            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
+          ]
+        }
+      ],
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+    },
+
+    {
+      "id": 26,
+      "title": "Source Breakdown",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 73 },
+      "collapsed": false
+    },
+
+    {
+      "id": 27,
+      "title": "Scan Rate by DEX (per minute)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 74 },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "spanNulls": false }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "raydium" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "pump_fun" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(sniper_tokens_scanned_by_source_total[1m]) * 60",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "${datasource}" }
+    },
+
+    {
+      "id": 28,
+      "title": "Positions Opened by DEX",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 74 },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by(source) (sniper_positions_opened_by_source_total)",
+          "legendFormat": "{{source}}",
           "refId": "A"
         }
       ],

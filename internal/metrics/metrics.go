@@ -112,4 +112,16 @@ var (
 		Name: "sniper_analyzer_panics_total",
 		Help: "Panics recovered inside analyzer.process() — indicates malformed on-chain data.",
 	})
+
+	// TokensScannedBySource counts new token events labeled by source DEX.
+	TokensScannedBySource = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sniper_tokens_scanned_by_source_total",
+		Help: "New token events received from program logs, labeled by source DEX (raydium, pump_fun).",
+	}, []string{"source"})
+
+	// PositionsOpenedBySource counts buy positions opened, labeled by source DEX.
+	PositionsOpenedBySource = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sniper_positions_opened_by_source_total",
+		Help: "Buy positions opened (SIM or live), labeled by source DEX (raydium, pump_fun).",
+	}, []string{"source"})
 )

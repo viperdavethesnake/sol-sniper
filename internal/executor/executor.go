@@ -75,7 +75,12 @@ type Position struct {
 	SellSignature  string     `json:"sell_signature,omitempty"`
 	ClosedAt       *time.Time `json:"closed_at,omitempty"`
 
-	// mu guards Status, lastQuotedSOL, and snaps — all mutated by monitor goroutines.
+	// Live price fields — updated by monitor goroutines (under mu).
+	EntryPriceSOL float64 `json:"entry_price_sol"` // SOL per token at open (SOLSpent / TokensIn)
+	CurrentSOL    float64 `json:"current_sol"`     // last estimated sell value in SOL
+	ROIPct        float64 `json:"roi_pct"`         // (CurrentSOL − SOLSpent) / SOLSpent × 100
+
+	// mu guards Status, lastQuotedSOL, CurrentSOL, ROIPct, and snaps.
 	mu            sync.Mutex
 	lastQuotedSOL float64
 	snaps         map[string]bool
@@ -320,6 +325,11 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, 
 		}
 	}
 
+	var entryPriceSOL float64
+	if tokensIn > 0 {
+		entryPriceSOL = solSpent / float64(tokensIn)
+	}
+
 	pos := &Position{
 		Token:          mintStr,
 		Pool:           sig.Pool.String(),
@@ -336,6 +346,9 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, 
 		TokensIn:       tokensIn,
 		OpenedAt:       time.Now(),
 		Status:         "open",
+		EntryPriceSOL:  entryPriceSOL,
+		CurrentSOL:     solSpent, // starts at cost basis; updated each monitor tick
+		ROIPct:         0,
 		snaps:          make(map[string]bool),
 	}
 	e.mu.Lock()
@@ -343,6 +356,7 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, 
 	e.mu.Unlock()
 	_ = e.cache.SavePosition(ctx, mintStr, pos)
 	metrics.ActivePositions.Inc()
+	metrics.PositionsOpenedBySource.WithLabelValues(sig.Source).Inc()
 }
 
 // ─── Sell ─────────────────────────────────────────────────────────────────────
@@ -629,6 +643,8 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
 		return
 	}
 	pos.lastQuotedSOL = currentSOL
+	pos.CurrentSOL = currentSOL
+	pos.ROIPct = roiPct
 	for _, m := range milestones {
 		if elapsed >= m.duration && !pos.snaps[m.label] {
 			pos.snaps[m.label] = true

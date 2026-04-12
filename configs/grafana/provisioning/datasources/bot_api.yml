@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: BotAPI
+    type: yesoreyeram-infinity-datasource
+    uid: bot-api-01
+    access: proxy
+    isDefault: false
+    jsonData:
+      global_queries: []

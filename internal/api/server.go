@@ -116,8 +116,12 @@ func (s *Server) handleStats(c *gin.Context) {
 }
 
 func (s *Server) handlePositions(c *gin.Context) {
-	positions := s.exec.ActivePositions()
-	c.JSON(http.StatusOK, gin.H{"positions": positions, "count": len(positions)})
+	posMap := s.exec.ActivePositions()
+	slice := make([]*executor.Position, 0, len(posMap))
+	for _, p := range posMap {
+		slice = append(slice, p)
+	}
+	c.JSON(http.StatusOK, gin.H{"positions": slice, "count": len(slice)})
 }
 
 func (s *Server) handleLeaderboard(c *gin.Context) {
