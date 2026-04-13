@@ -1,0 +1,4 @@
+=== Sell Triggers ===
+  4072  (81.5%)  stop_loss
+   649  (13.0%)  timeout
+   276  (5.5%)  take_profit

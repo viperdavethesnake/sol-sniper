@@ -7,7 +7,7 @@
   "schemaVersion": 38,
   "title": "Sol Sniper — SS-V1",
   "uid": "sol-sniper-01",
-  "version": 4,
+  "version": 5,
   "panels": [
 
     {
@@ -689,6 +689,7 @@
       "title": "Live Positions",
       "type": "table",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "options": {
         "cellHeight": "sm",
         "footer": { "enablePagination": false },
@@ -696,22 +697,16 @@
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "left",
-            "cellOptions": { "type": "auto" },
-            "inspect": false
-          }
+          "custom": { "align": "left", "cellOptions": { "type": "auto" }, "inspect": false }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "ROI %" },
+            "matcher": { "id": "byName", "options": "Value #A" },
             "properties": [
+              { "id": "displayName", "value": "ROI %" },
               { "id": "unit", "value": "percent" },
               { "id": "decimals", "value": 2 },
-              {
-                "id": "custom.cellOptions",
-                "value": { "type": "color-background", "mode": "gradient" }
-              },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
               {
                 "id": "thresholds",
                 "value": {
@@ -727,30 +722,18 @@
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Current (SOL)" },
+            "matcher": { "id": "byName", "options": "Value #B" },
             "properties": [
+              { "id": "displayName", "value": "Current (SOL)" },
               { "id": "unit", "value": "short" },
               { "id": "decimals", "value": 4 }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "SOL In" },
+            "matcher": { "id": "byName", "options": "token" },
             "properties": [
-              { "id": "unit", "value": "short" },
-              { "id": "decimals", "value": 4 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Entry (SOL/tok)" },
-            "properties": [
-              { "id": "unit", "value": "short" },
-              { "id": "decimals", "value": 8 }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "Mint Address" },
-            "properties": [
-              { "id": "custom.width", "value": 120 },
+              { "id": "displayName", "value": "Mint" },
+              { "id": "custom.width", "value": 340 },
               {
                 "id": "links",
                 "value": [{
@@ -760,35 +743,55 @@
                 }]
               }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "displayName", "value": "DEX" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "symbol" },
+            "properties": [{ "id": "displayName", "value": "Symbol" }]
           }
         ]
       },
       "targets": [
         {
-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "refId": "A",
-          "type": "json",
-          "parser": "backend",
-          "source": "url",
-          "method": "GET",
-          "url": "http://localhost:8080/api/positions",
-          "root_selector": "positions",
+          "expr": "sniper_position_roi_pct",
+          "instant": true,
           "format": "table",
-          "columns": [
-            { "selector": "symbol",         "text": "Symbol",          "type": "string" },
-            { "selector": "token",          "text": "Mint Address",    "type": "string" },
-            { "selector": "source",         "text": "DEX",             "type": "string" },
-            { "selector": "opened_at",      "text": "Opened At",       "type": "string" },
-            { "selector": "sol_spent",      "text": "SOL In",          "type": "number" },
-            { "selector": "entry_price_sol","text": "Entry (SOL/tok)", "type": "number" },
-            { "selector": "tokens_in",      "text": "Tokens",          "type": "number" },
-            { "selector": "current_sol",    "text": "Current (SOL)",   "type": "number" },
-            { "selector": "roi_pct",        "text": "ROI %",           "type": "number" },
-            { "selector": "status",         "text": "Status",          "type": "string" }
-          ]
+          "legendFormat": ""
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "refId": "B",
+          "expr": "sniper_position_current_sol",
+          "instant": true,
+          "format": "table",
+          "legendFormat": ""
         }
       ],
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": { "byField": "token", "mode": "outer" }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "source 1": true,
+              "symbol 1": true
+            }
+          }
+        }
+      ]
     },
 
     {
@@ -804,9 +807,11 @@
       "title": "Top Gainers",
       "type": "table",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "options": {
         "cellHeight": "sm",
-        "footer": { "enablePagination": false }
+        "footer": { "enablePagination": false },
+        "sortBy": [{ "displayName": "P&L (SOL)", "desc": true }]
       },
       "fieldConfig": {
         "defaults": {
@@ -814,8 +819,9 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "P&L (SOL)" },
+            "matcher": { "id": "byName", "options": "Value" },
             "properties": [
+              { "id": "displayName", "value": "P&L (SOL)" },
               { "id": "unit", "value": "short" },
               { "id": "decimals", "value": 4 },
               { "id": "custom.cellOptions", "value": { "type": "color-background" } },
@@ -823,37 +829,53 @@
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
-                  "steps": [
-                    { "color": "green", "value": null }
-                  ]
+                  "steps": [{ "color": "green", "value": null }]
                 }
               },
               { "id": "color", "value": { "mode": "thresholds" } }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "token" },
+            "properties": [
+              { "id": "displayName", "value": "Mint" },
+              { "id": "custom.width", "value": 240 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "symbol" },
+            "properties": [{ "id": "displayName", "value": "Symbol" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "trigger" },
+            "properties": [{ "id": "displayName", "value": "Exit" }]
           }
         ]
       },
       "targets": [
         {
-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "refId": "A",
-          "type": "json",
-          "parser": "backend",
-          "source": "url",
-          "method": "GET",
-          "url": "http://localhost:8080/api/leaderboard",
-          "root_selector": "top_gainers",
+          "expr": "topk(10, sniper_closed_position_pnl_sol > 0)",
+          "instant": true,
           "format": "table",
-          "columns": [
-            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
-            { "selector": "token",     "text": "Mint",       "type": "string" },
-            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
-            { "selector": "trigger",   "text": "Exit",       "type": "string" },
-            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
-          ]
+          "legendFormat": ""
         }
       ],
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "source": false
+            }
+          }
+        }
+      ]
     },
 
     {
@@ -861,9 +883,11 @@
       "title": "Top Losers",
       "type": "table",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "options": {
         "cellHeight": "sm",
-        "footer": { "enablePagination": false }
+        "footer": { "enablePagination": false },
+        "sortBy": [{ "displayName": "P&L (SOL)", "desc": false }]
       },
       "fieldConfig": {
         "defaults": {
@@ -871,8 +895,9 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "P&L (SOL)" },
+            "matcher": { "id": "byName", "options": "Value" },
             "properties": [
+              { "id": "displayName", "value": "P&L (SOL)" },
               { "id": "unit", "value": "short" },
               { "id": "decimals", "value": 4 },
               { "id": "custom.cellOptions", "value": { "type": "color-background" } },
@@ -888,30 +913,47 @@
               },
               { "id": "color", "value": { "mode": "thresholds" } }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "token" },
+            "properties": [
+              { "id": "displayName", "value": "Mint" },
+              { "id": "custom.width", "value": 240 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "symbol" },
+            "properties": [{ "id": "displayName", "value": "Symbol" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "trigger" },
+            "properties": [{ "id": "displayName", "value": "Exit" }]
           }
         ]
       },
       "targets": [
         {
-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "refId": "A",
-          "type": "json",
-          "parser": "backend",
-          "source": "url",
-          "method": "GET",
-          "url": "http://localhost:8080/api/leaderboard",
-          "root_selector": "top_losers",
+          "expr": "bottomk(10, sniper_closed_position_pnl_sol < 0)",
+          "instant": true,
           "format": "table",
-          "columns": [
-            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
-            { "selector": "token",     "text": "Mint",       "type": "string" },
-            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
-            { "selector": "trigger",   "text": "Exit",       "type": "string" },
-            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
-          ]
+          "legendFormat": ""
         }
       ],
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            }
+          }
+        }
+      ]
     },
 
     {

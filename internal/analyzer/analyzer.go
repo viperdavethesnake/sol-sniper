@@ -19,7 +19,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
@@ -65,6 +68,10 @@ type TradeSignal struct {
 	DetectedAt time.Time
 }
 
+// pumpFunHTTPClient is used for Pump.fun API symbol lookups — short timeout,
+// non-critical (symbol fetch failure just leaves symbol blank).
+var pumpFunHTTPClient = &http.Client{Timeout: 2 * time.Second}
+
 // Analyzer reads TokenEvents, runs safety checks, and emits TradeSignals.
 type Analyzer struct {
 	cfg     *config.Config
@@ -103,7 +110,7 @@ func (a *Analyzer) Run(ctx context.Context, eventCh <-chan *listener.TokenEvent)
 // process runs the full analysis pipeline for a single token event.
 func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 	// Per-token deadline prevents goroutine leaks when RPC stalls.
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 
 	start := time.Now()
@@ -207,20 +214,44 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		}
 	}
 
-	// ── 5. Holder concentration ───────────────────────────────────────────────
-	rugged, holdersPct, holdersCount, err := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply)
-	meta.TopHoldersPct = holdersPct
-	meta.HoldersCount = holdersCount
-	if err != nil {
-		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: holder check failed")
-	} else if rugged {
+	// ── 5+6. Holder concentration + token metadata (parallel) ────────────────
+	// Both are network-bound and independent; run concurrently to save ~200ms.
+	type holderResult struct {
+		rugged      bool
+		topPct      float64
+		count       int
+		err         error
+	}
+	holderCh := make(chan holderResult, 1)
+	symbolCh := make(chan string, 1)
+
+	go func() {
+		rugged, pct, cnt, e := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply)
+		holderCh <- holderResult{rugged, pct, cnt, e}
+	}()
+	go func() {
+		if ev.Source == "pump_fun" {
+			// Metaplex PDA is not written at Pump.fun token creation time.
+			// Use the Pump.fun REST API instead (non-critical: blank on failure).
+			symbolCh <- fetchPumpFunSymbol(ev.Mint.String())
+		} else {
+			symbolCh <- a.fetchSymbol(ctx, ev.Mint)
+		}
+	}()
+
+	hr := <-holderCh
+	symbol := <-symbolCh
+
+	meta.TopHoldersPct = hr.topPct
+	meta.HoldersCount = hr.count
+	meta.Symbol = symbol
+
+	if hr.err != nil {
+		log.Warn().Err(hr.err).Str("mint", mintStr).Msg("analyzer: holder check failed")
+	} else if hr.rugged {
 		reject("rug_concentration")
 		return
 	}
-
-	// ── 6. Token metadata ─────────────────────────────────────────────────────
-	symbol := a.fetchSymbol(ctx, ev.Mint)
-	meta.Symbol = symbol
 
 	// ── 7. Vault balances + friction simulation ───────────────────────────────
 	buyLamports := a.cfg.MaxBuyLamports()
@@ -256,16 +287,30 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
 		quoteVault = ev.Pool
 	} else {
 		// Raydium: read vault balances from on-chain pool state account.
-		baseVault, quoteVault, err = a.resolveVaults(ctx, ev)
-		if err != nil {
-			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault resolution failed")
-			reject("vault_read_error")
-			return
-		}
+		// The pool account may not be fully written at detection time — retry with
+		// 300 ms backoff to handle the initialization race.
 		var reserveBase, reserveQuote uint64
-		reserveBase, reserveQuote, err = a.readVaultBalances(ctx, baseVault, quoteVault)
+		const maxAttempts = 3
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-ctx.Done():
+					reject("vault_read_error")
+					return
+				}
+			}
+			baseVault, quoteVault, err = a.resolveVaults(ctx, ev)
+			if err != nil {
+				continue
+			}
+			reserveBase, reserveQuote, err = a.readVaultBalances(ctx, baseVault, quoteVault)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
-			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault balance read failed")
+			log.Warn().Err(err).Str("mint", mintStr).Int("attempts", maxAttempts).Msg("analyzer: vault read failed after retries")
 			reject("vault_read_error")
 			return
 		}
@@ -599,6 +644,35 @@ func quoteEntry(reserveBase, reserveQuote, amountInLamports uint64) (tokensOut u
 		priceImpactPct = 0
 	}
 	return tokensOut, priceImpactPct
+}
+
+// ─── Symbol fetch ─────────────────────────────────────────────────────────────
+
+// fetchPumpFunSymbol calls the Pump.fun REST API to get the token symbol.
+// Metaplex metadata PDA is not written at Pump.fun token creation time, so
+// on-chain reads always fail for new tokens. The API is the reliable path.
+// Returns empty string on any error — symbol is non-critical.
+func fetchPumpFunSymbol(mint string) string {
+	url := "https://frontend-api.pump.fun/coins/" + mint
+	resp, err := pumpFunHTTPClient.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return ""
+	}
+	var result struct {
+		Symbol string `json:"symbol"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(result.Symbol)
 }
 
 // ─── Metaplex metadata ────────────────────────────────────────────────────────

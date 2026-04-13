@@ -1,0 +1,741 @@
+diff --git a/configs/grafana/provisioning/dashboards/sol_sniper_v1.json b/configs/grafana/provisioning/dashboards/sol_sniper_v1.json
+index 81ffe17..78dc576 100644
+--- a/configs/grafana/provisioning/dashboards/sol_sniper_v1.json
++++ b/configs/grafana/provisioning/dashboards/sol_sniper_v1.json
+@@ -7,7 +7,7 @@
+   "schemaVersion": 38,
+   "title": "Sol Sniper — SS-V1",
+   "uid": "sol-sniper-01",
+-  "version": 4,
++  "version": 5,
+   "panels": [
+ 
+     {
+@@ -689,6 +689,7 @@
+       "title": "Live Positions",
+       "type": "table",
+       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 54 },
++      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+       "options": {
+         "cellHeight": "sm",
+         "footer": { "enablePagination": false },
+@@ -696,22 +697,16 @@
+       },
+       "fieldConfig": {
+         "defaults": {
+-          "custom": {
+-            "align": "left",
+-            "cellOptions": { "type": "auto" },
+-            "inspect": false
+-          }
++          "custom": { "align": "left", "cellOptions": { "type": "auto" }, "inspect": false }
+         },
+         "overrides": [
+           {
+-            "matcher": { "id": "byName", "options": "ROI %" },
++            "matcher": { "id": "byName", "options": "Value #A" },
+             "properties": [
++              { "id": "displayName", "value": "ROI %" },
+               { "id": "unit", "value": "percent" },
+               { "id": "decimals", "value": 2 },
+-              {
+-                "id": "custom.cellOptions",
+-                "value": { "type": "color-background", "mode": "gradient" }
+-              },
++              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+               {
+                 "id": "thresholds",
+                 "value": {
+@@ -727,30 +722,18 @@
+             ]
+           },
+           {
+-            "matcher": { "id": "byName", "options": "Current (SOL)" },
++            "matcher": { "id": "byName", "options": "Value #B" },
+             "properties": [
++              { "id": "displayName", "value": "Current (SOL)" },
+               { "id": "unit", "value": "short" },
+               { "id": "decimals", "value": 4 }
+             ]
+           },
+           {
+-            "matcher": { "id": "byName", "options": "SOL In" },
+-            "properties": [
+-              { "id": "unit", "value": "short" },
+-              { "id": "decimals", "value": 4 }
+-            ]
+-          },
+-          {
+-            "matcher": { "id": "byName", "options": "Entry (SOL/tok)" },
+-            "properties": [
+-              { "id": "unit", "value": "short" },
+-              { "id": "decimals", "value": 8 }
+-            ]
+-          },
+-          {
+-            "matcher": { "id": "byName", "options": "Mint Address" },
++            "matcher": { "id": "byName", "options": "token" },
+             "properties": [
+-              { "id": "custom.width", "value": 120 },
++              { "id": "displayName", "value": "Mint" },
++              { "id": "custom.width", "value": 340 },
+               {
+                 "id": "links",
+                 "value": [{
+@@ -760,35 +743,55 @@
+                 }]
+               }
+             ]
++          },
++          {
++            "matcher": { "id": "byName", "options": "source" },
++            "properties": [{ "id": "displayName", "value": "DEX" }]
++          },
++          {
++            "matcher": { "id": "byName", "options": "symbol" },
++            "properties": [{ "id": "displayName", "value": "Symbol" }]
+           }
+         ]
+       },
+       "targets": [
+         {
+-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
++          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+           "refId": "A",
+-          "type": "json",
+-          "parser": "backend",
+-          "source": "url",
+-          "method": "GET",
+-          "url": "http://localhost:8080/api/positions",
+-          "root_selector": "positions",
++          "expr": "sniper_position_roi_pct",
++          "instant": true,
+           "format": "table",
+-          "columns": [
+-            { "selector": "symbol",         "text": "Symbol",          "type": "string" },
+-            { "selector": "token",          "text": "Mint Address",    "type": "string" },
+-            { "selector": "source",         "text": "DEX",             "type": "string" },
+-            { "selector": "opened_at",      "text": "Opened At",       "type": "string" },
+-            { "selector": "sol_spent",      "text": "SOL In",          "type": "number" },
+-            { "selector": "entry_price_sol","text": "Entry (SOL/tok)", "type": "number" },
+-            { "selector": "tokens_in",      "text": "Tokens",          "type": "number" },
+-            { "selector": "current_sol",    "text": "Current (SOL)",   "type": "number" },
+-            { "selector": "roi_pct",        "text": "ROI %",           "type": "number" },
+-            { "selector": "status",         "text": "Status",          "type": "string" }
+-          ]
++          "legendFormat": ""
++        },
++        {
++          "datasource": { "type": "prometheus", "uid": "${datasource}" },
++          "refId": "B",
++          "expr": "sniper_position_current_sol",
++          "instant": true,
++          "format": "table",
++          "legendFormat": ""
+         }
+       ],
+-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
++      "transformations": [
++        {
++          "id": "joinByField",
++          "options": { "byField": "token", "mode": "outer" }
++        },
++        {
++          "id": "organize",
++          "options": {
++            "excludeByName": {
++              "Time": true,
++              "Time 1": true,
++              "__name__": true,
++              "instance": true,
++              "job": true,
++              "source 1": true,
++              "symbol 1": true
++            }
++          }
++        }
++      ]
+     },
+ 
+     {
+@@ -804,9 +807,11 @@
+       "title": "Top Gainers",
+       "type": "table",
+       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
++      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+       "options": {
+         "cellHeight": "sm",
+-        "footer": { "enablePagination": false }
++        "footer": { "enablePagination": false },
++        "sortBy": [{ "displayName": "P&L (SOL)", "desc": true }]
+       },
+       "fieldConfig": {
+         "defaults": {
+@@ -814,8 +819,9 @@
+         },
+         "overrides": [
+           {
+-            "matcher": { "id": "byName", "options": "P&L (SOL)" },
++            "matcher": { "id": "byName", "options": "Value" },
+             "properties": [
++              { "id": "displayName", "value": "P&L (SOL)" },
+               { "id": "unit", "value": "short" },
+               { "id": "decimals", "value": 4 },
+               { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+@@ -823,37 +829,53 @@
+                 "id": "thresholds",
+                 "value": {
+                   "mode": "absolute",
+-                  "steps": [
+-                    { "color": "green", "value": null }
+-                  ]
++                  "steps": [{ "color": "green", "value": null }]
+                 }
+               },
+               { "id": "color", "value": { "mode": "thresholds" } }
+             ]
++          },
++          {
++            "matcher": { "id": "byName", "options": "token" },
++            "properties": [
++              { "id": "displayName", "value": "Mint" },
++              { "id": "custom.width", "value": 240 }
++            ]
++          },
++          {
++            "matcher": { "id": "byName", "options": "symbol" },
++            "properties": [{ "id": "displayName", "value": "Symbol" }]
++          },
++          {
++            "matcher": { "id": "byName", "options": "trigger" },
++            "properties": [{ "id": "displayName", "value": "Exit" }]
+           }
+         ]
+       },
+       "targets": [
+         {
+-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
++          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+           "refId": "A",
+-          "type": "json",
+-          "parser": "backend",
+-          "source": "url",
+-          "method": "GET",
+-          "url": "http://localhost:8080/api/leaderboard",
+-          "root_selector": "top_gainers",
++          "expr": "topk(10, sniper_closed_position_pnl_sol > 0)",
++          "instant": true,
+           "format": "table",
+-          "columns": [
+-            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
+-            { "selector": "token",     "text": "Mint",       "type": "string" },
+-            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
+-            { "selector": "trigger",   "text": "Exit",       "type": "string" },
+-            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
+-          ]
++          "legendFormat": ""
+         }
+       ],
+-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
++      "transformations": [
++        {
++          "id": "organize",
++          "options": {
++            "excludeByName": {
++              "Time": true,
++              "__name__": true,
++              "instance": true,
++              "job": true,
++              "source": false
++            }
++          }
++        }
++      ]
+     },
+ 
+     {
+@@ -861,9 +883,11 @@
+       "title": "Top Losers",
+       "type": "table",
+       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
++      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+       "options": {
+         "cellHeight": "sm",
+-        "footer": { "enablePagination": false }
++        "footer": { "enablePagination": false },
++        "sortBy": [{ "displayName": "P&L (SOL)", "desc": false }]
+       },
+       "fieldConfig": {
+         "defaults": {
+@@ -871,8 +895,9 @@
+         },
+         "overrides": [
+           {
+-            "matcher": { "id": "byName", "options": "P&L (SOL)" },
++            "matcher": { "id": "byName", "options": "Value" },
+             "properties": [
++              { "id": "displayName", "value": "P&L (SOL)" },
+               { "id": "unit", "value": "short" },
+               { "id": "decimals", "value": 4 },
+               { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+@@ -888,30 +913,47 @@
+               },
+               { "id": "color", "value": { "mode": "thresholds" } }
+             ]
++          },
++          {
++            "matcher": { "id": "byName", "options": "token" },
++            "properties": [
++              { "id": "displayName", "value": "Mint" },
++              { "id": "custom.width", "value": 240 }
++            ]
++          },
++          {
++            "matcher": { "id": "byName", "options": "symbol" },
++            "properties": [{ "id": "displayName", "value": "Symbol" }]
++          },
++          {
++            "matcher": { "id": "byName", "options": "trigger" },
++            "properties": [{ "id": "displayName", "value": "Exit" }]
+           }
+         ]
+       },
+       "targets": [
+         {
+-          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" },
++          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+           "refId": "A",
+-          "type": "json",
+-          "parser": "backend",
+-          "source": "url",
+-          "method": "GET",
+-          "url": "http://localhost:8080/api/leaderboard",
+-          "root_selector": "top_losers",
++          "expr": "bottomk(10, sniper_closed_position_pnl_sol < 0)",
++          "instant": true,
+           "format": "table",
+-          "columns": [
+-            { "selector": "symbol",    "text": "Symbol",     "type": "string" },
+-            { "selector": "token",     "text": "Mint",       "type": "string" },
+-            { "selector": "delta_sol", "text": "P&L (SOL)",  "type": "number" },
+-            { "selector": "trigger",   "text": "Exit",       "type": "string" },
+-            { "selector": "closed_at", "text": "Closed At",  "type": "string" }
+-          ]
++          "legendFormat": ""
+         }
+       ],
+-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "bot-api-01" }
++      "transformations": [
++        {
++          "id": "organize",
++          "options": {
++            "excludeByName": {
++              "Time": true,
++              "__name__": true,
++              "instance": true,
++              "job": true
++            }
++          }
++        }
++      ]
+     },
+ 
+     {
+diff --git a/internal/analyzer/analyzer.go b/internal/analyzer/analyzer.go
+index 3ea7395..198c519 100644
+--- a/internal/analyzer/analyzer.go
++++ b/internal/analyzer/analyzer.go
+@@ -19,7 +19,10 @@ import (
+ 	"encoding/binary"
+ 	"encoding/json"
+ 	"fmt"
++	"io"
++	"net/http"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/gagliardetto/solana-go"
+@@ -65,6 +68,10 @@ type TradeSignal struct {
+ 	DetectedAt time.Time
+ }
+ 
++// pumpFunHTTPClient is used for Pump.fun API symbol lookups — short timeout,
++// non-critical (symbol fetch failure just leaves symbol blank).
++var pumpFunHTTPClient = &http.Client{Timeout: 2 * time.Second}
++
+ // Analyzer reads TokenEvents, runs safety checks, and emits TradeSignals.
+ type Analyzer struct {
+ 	cfg     *config.Config
+@@ -103,7 +110,7 @@ func (a *Analyzer) Run(ctx context.Context, eventCh <-chan *listener.TokenEvent)
+ // process runs the full analysis pipeline for a single token event.
+ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
+ 	// Per-token deadline prevents goroutine leaks when RPC stalls.
+-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
++	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+ 	defer cancel()
+ 
+ 	start := time.Now()
+@@ -207,21 +214,45 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
+ 		}
+ 	}
+ 
+-	// ── 5. Holder concentration ───────────────────────────────────────────────
+-	rugged, holdersPct, holdersCount, err := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply)
+-	meta.TopHoldersPct = holdersPct
+-	meta.HoldersCount = holdersCount
+-	if err != nil {
+-		log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: holder check failed")
+-	} else if rugged {
+-		reject("rug_concentration")
+-		return
++	// ── 5+6. Holder concentration + token metadata (parallel) ────────────────
++	// Both are network-bound and independent; run concurrently to save ~200ms.
++	type holderResult struct {
++		rugged      bool
++		topPct      float64
++		count       int
++		err         error
+ 	}
++	holderCh := make(chan holderResult, 1)
++	symbolCh := make(chan string, 1)
++
++	go func() {
++		rugged, pct, cnt, e := a.isConcentrated(ctx, ev.Mint, mintInfo.Supply)
++		holderCh <- holderResult{rugged, pct, cnt, e}
++	}()
++	go func() {
++		if ev.Source == "pump_fun" {
++			// Metaplex PDA is not written at Pump.fun token creation time.
++			// Use the Pump.fun REST API instead (non-critical: blank on failure).
++			symbolCh <- fetchPumpFunSymbol(ev.Mint.String())
++		} else {
++			symbolCh <- a.fetchSymbol(ctx, ev.Mint)
++		}
++	}()
++
++	hr := <-holderCh
++	symbol := <-symbolCh
+ 
+-	// ── 6. Token metadata ─────────────────────────────────────────────────────
+-	symbol := a.fetchSymbol(ctx, ev.Mint)
++	meta.TopHoldersPct = hr.topPct
++	meta.HoldersCount = hr.count
+ 	meta.Symbol = symbol
+ 
++	if hr.err != nil {
++		log.Warn().Err(hr.err).Str("mint", mintStr).Msg("analyzer: holder check failed")
++	} else if hr.rugged {
++		reject("rug_concentration")
++		return
++	}
++
+ 	// ── 7. Vault balances + friction simulation ───────────────────────────────
+ 	buyLamports := a.cfg.MaxBuyLamports()
+ 
+@@ -256,16 +287,30 @@ func (a *Analyzer) process(ctx context.Context, ev *listener.TokenEvent) {
+ 		quoteVault = ev.Pool
+ 	} else {
+ 		// Raydium: read vault balances from on-chain pool state account.
+-		baseVault, quoteVault, err = a.resolveVaults(ctx, ev)
+-		if err != nil {
+-			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault resolution failed")
+-			reject("vault_read_error")
+-			return
+-		}
++		// The pool account may not be fully written at detection time — retry with
++		// 300 ms backoff to handle the initialization race.
+ 		var reserveBase, reserveQuote uint64
+-		reserveBase, reserveQuote, err = a.readVaultBalances(ctx, baseVault, quoteVault)
++		const maxAttempts = 3
++		for attempt := 0; attempt < maxAttempts; attempt++ {
++			if attempt > 0 {
++				select {
++				case <-time.After(300 * time.Millisecond):
++				case <-ctx.Done():
++					reject("vault_read_error")
++					return
++				}
++			}
++			baseVault, quoteVault, err = a.resolveVaults(ctx, ev)
++			if err != nil {
++				continue
++			}
++			reserveBase, reserveQuote, err = a.readVaultBalances(ctx, baseVault, quoteVault)
++			if err == nil {
++				break
++			}
++		}
+ 		if err != nil {
+-			log.Warn().Err(err).Str("mint", mintStr).Msg("analyzer: vault balance read failed")
++			log.Warn().Err(err).Str("mint", mintStr).Int("attempts", maxAttempts).Msg("analyzer: vault read failed after retries")
+ 			reject("vault_read_error")
+ 			return
+ 		}
+@@ -601,6 +646,35 @@ func quoteEntry(reserveBase, reserveQuote, amountInLamports uint64) (tokensOut u
+ 	return tokensOut, priceImpactPct
+ }
+ 
++// ─── Symbol fetch ─────────────────────────────────────────────────────────────
++
++// fetchPumpFunSymbol calls the Pump.fun REST API to get the token symbol.
++// Metaplex metadata PDA is not written at Pump.fun token creation time, so
++// on-chain reads always fail for new tokens. The API is the reliable path.
++// Returns empty string on any error — symbol is non-critical.
++func fetchPumpFunSymbol(mint string) string {
++	url := "https://frontend-api.pump.fun/coins/" + mint
++	resp, err := pumpFunHTTPClient.Get(url)
++	if err != nil {
++		return ""
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return ""
++	}
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
++	if err != nil {
++		return ""
++	}
++	var result struct {
++		Symbol string `json:"symbol"`
++	}
++	if err := json.Unmarshal(body, &result); err != nil {
++		return ""
++	}
++	return strings.TrimSpace(result.Symbol)
++}
++
+ // ─── Metaplex metadata ────────────────────────────────────────────────────────
+ 
+ // fetchSymbol attempts to read the token symbol from the Metaplex metadata PDA.
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 5b2c2cc..7d3e446 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -36,12 +36,16 @@ type Config struct {
+ 	// Solana program IDs
+ 	RaydiumAMMProgram string // Raydium AMM V4 program ID
+ 	PumpFunProgram    string // Pump.fun program ID
++	RaydiumDisabled   bool   // skip Raydium listener subscription entirely
+ 
+ 	// API
+ 	APIPort string
+ 
+ 	// Simulation
+ 	SimulationMode bool // analyse and log but never submit real transactions
++
++	// Position cap — prevents rate-limit storms when many tokens pass analysis simultaneously.
++	MaxActivePositions int // 0 = unlimited; >0 = skip new buys when at limit
+ }
+ 
+ // Load reads configuration from environment (and optional .env file).
+@@ -70,6 +74,7 @@ func Load() (*Config, error) {
+ 		APIPort:        getEnv("API_PORT", "8080"),
+ 		RaydiumAMMProgram: getEnv("RAYDIUM_AMM_PROGRAM", "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"),
+ 		PumpFunProgram:    getEnv("PUMP_FUN_PROGRAM", "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
++		RaydiumDisabled:   getEnv("RAYDIUM_DISABLED", "false") == "true",
+ 	}
+ 
+ 	cfg.MinLiqSOL = mustFloat(getEnv("MIN_LIQUIDITY_SOL", "5.0"))
+@@ -82,6 +87,9 @@ func Load() (*Config, error) {
+ 	interval, _ := strconv.Atoi(getEnv("POSITION_MONITOR_INTERVAL", "30"))
+ 	cfg.MonitorInterval = interval
+ 
++	maxPos, _ := strconv.Atoi(getEnv("MAX_ACTIVE_POSITIONS", "0"))
++	cfg.MaxActivePositions = maxPos
++
+ 	if !simMode {
+ 		if cfg.PrivateKey == "" {
+ 			return nil, fmt.Errorf("BOT_PRIVATE_KEY is required when SIMULATION_MODE is not true")
+diff --git a/internal/executor/executor.go b/internal/executor/executor.go
+index 9c2968c..4b00d67 100644
+--- a/internal/executor/executor.go
++++ b/internal/executor/executor.go
+@@ -210,11 +210,18 @@ func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
+ 
+ 	e.mu.RLock()
+ 	_, exists := e.positions[mintStr]
++	posCount := len(e.positions)
+ 	e.mu.RUnlock()
+ 	if exists {
+ 		return
+ 	}
+ 
++	if e.cfg.MaxActivePositions > 0 && posCount >= e.cfg.MaxActivePositions {
++		log.Debug().Int("positions", posCount).Int("cap", e.cfg.MaxActivePositions).Str("mint", mintStr).Msg("executor: position cap reached, skipping buy")
++		metrics.TokensFiltered.WithLabelValues("position_cap").Inc()
++		return
++	}
++
+ 	buyLamports := e.cfg.MaxBuyLamports()
+ 	tipLamports := calcTipLamports(sig.LiqSOL, 0.001)
+ 	tipSOL := float64(tipLamports) / 1e9
+@@ -357,6 +364,8 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal,
+ 	_ = e.cache.SavePosition(ctx, mintStr, pos)
+ 	metrics.ActivePositions.Inc()
+ 	metrics.PositionsOpenedBySource.WithLabelValues(sig.Source).Inc()
++	metrics.PositionROIPct.WithLabelValues(mintStr, sig.Source, sig.Symbol).Set(0)
++	metrics.PositionCurrentSOL.WithLabelValues(mintStr, sig.Source, sig.Symbol).Set(solSpent)
+ }
+ 
+ // ─── Sell ─────────────────────────────────────────────────────────────────────
+@@ -370,17 +379,18 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
+ 
+ 	// Atomically claim this position — prevents duplicate sells from concurrent
+ 	// monitor ticks or kill-switch races.
++	// Note: checkPosition pre-sets Status="selling" before spawning this goroutine,
++	// so "selling" is a valid starting state here. Only bail if already "sold".
+ 	pos.mu.Lock()
+-	if pos.Status != "open" && pos.Status != "selling" {
++	if pos.Status == "sold" {
+ 		pos.mu.Unlock()
+ 		return
+ 	}
+-	if pos.Status == "selling" {
+-		// Another goroutine already claimed it.
+-		pos.mu.Unlock()
+-		return
++	if pos.Status == "open" {
++		// Direct call path (e.g. kill-switch): claim it now.
++		pos.Status = "selling"
+ 	}
+-	pos.Status = "selling"
++	// Status is "selling" — pre-claimed by checkPosition; proceed.
+ 	pos.mu.Unlock()
+ 
+ 	mintStr := pos.Token
+@@ -519,6 +529,9 @@ func (e *Executor) closePosition(ctx context.Context, pos *Position, trigger, tx
+ 	})
+ 	metrics.ActivePositions.Dec()
+ 	metrics.PnLSOL.Add(deltaSOL)
++	metrics.PositionROIPct.DeleteLabelValues(pos.Token, pos.Source, pos.Symbol)
++	metrics.PositionCurrentSOL.DeleteLabelValues(pos.Token, pos.Source, pos.Symbol)
++	metrics.ClosedPositionPnL.WithLabelValues(pos.Token, pos.Source, pos.Symbol, trigger).Set(deltaSOL)
+ 
+ 	if e.dw != nil {
+ 		traj := e.buildTrajectory(ctx, pos.Token)
+@@ -671,7 +684,7 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
+ 		pos.mu.Unlock()
+ 		log.Info().Str("mint", pos.Token).Float64("roi_pct", roiPct).Msg("executor: stop-loss")
+ 		go e.executeSell(ctx, pos, "stop_loss")
+-	case elapsed > 15*time.Minute:
++	case elapsed > 5*time.Minute:
+ 		pos.Status = "selling"
+ 		pos.mu.Unlock()
+ 		log.Info().Str("mint", pos.Token).Msg("executor: position timeout")
+@@ -679,6 +692,10 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
+ 	default:
+ 		pos.mu.Unlock()
+ 	}
++
++	// Update per-position Prometheus gauges outside the lock.
++	metrics.PositionROIPct.WithLabelValues(pos.Token, pos.Source, pos.Symbol).Set(roiPct)
++	metrics.PositionCurrentSOL.WithLabelValues(pos.Token, pos.Source, pos.Symbol).Set(currentSOL)
+ }
+ 
+ func (e *Executor) buildTrajectory(ctx context.Context, tokenAddr string) []dataset.TrajectoryPoint {
+diff --git a/internal/listener/listener.go b/internal/listener/listener.go
+index 88649b0..fbf810c 100644
+--- a/internal/listener/listener.go
++++ b/internal/listener/listener.go
+@@ -77,11 +77,26 @@ func (l *Listener) subscribe(ctx context.Context) error {
+ 	}
+ 	defer wsClient.Close()
+ 
+-	raydiumSub, err := wsClient.LogsSubscribeMentions(l.raydiumProg, rpc.CommitmentConfirmed)
+-	if err != nil {
+-		return err
++	// Raydium subscription is optional — disable when not actively trading Raydium
++	// to eliminate vault_read_error noise from the training dataset.
++	raydiumCh := make(chan *ws.LogResult, 64)
++	if !l.cfg.RaydiumDisabled {
++		raydiumSub, err := wsClient.LogsSubscribeMentions(l.raydiumProg, rpc.CommitmentConfirmed)
++		if err != nil {
++			return err
++		}
++		defer raydiumSub.Unsubscribe()
++		go func() {
++			for {
++				result, err := raydiumSub.Recv()
++				if err != nil {
++					close(raydiumCh)
++					return
++				}
++				raydiumCh <- result
++			}
++		}()
+ 	}
+-	defer raydiumSub.Unsubscribe()
+ 
+ 	pumpSub, err := wsClient.LogsSubscribeMentions(l.pumpFunProg, rpc.CommitmentConfirmed)
+ 	if err != nil {
+@@ -89,25 +104,7 @@ func (l *Listener) subscribe(ctx context.Context) error {
+ 	}
+ 	defer pumpSub.Unsubscribe()
+ 
+-	log.Info().
+-		Str("raydium", l.cfg.RaydiumAMMProgram).
+-		Str("pump_fun", l.cfg.PumpFunProgram).
+-		Msg("listener: WebSocket subscriptions active")
+-
+-	raydiumCh := make(chan *ws.LogResult, 64)
+ 	pumpCh := make(chan *ws.LogResult, 64)
+-
+-	// Receiver goroutines — forward raw results to buffered channels.
+-	go func() {
+-		for {
+-			result, err := raydiumSub.Recv()
+-			if err != nil {
+-				close(raydiumCh)
+-				return
+-			}
+-			raydiumCh <- result
+-		}
+-	}()
+ 	go func() {
+ 		for {
+ 			result, err := pumpSub.Recv()
+@@ -119,6 +116,11 @@ func (l *Listener) subscribe(ctx context.Context) error {
+ 		}
+ 	}()
+ 
++	log.Info().
++		Str("pump_fun", l.cfg.PumpFunProgram).
++		Bool("raydium_disabled", l.cfg.RaydiumDisabled).
++		Msg("listener: WebSocket subscriptions active")
++
+ 	for {
+ 		select {
+ 		case <-ctx.Done():
+diff --git a/internal/metrics/metrics.go b/internal/metrics/metrics.go
+index abebd35..a0b536a 100644
+--- a/internal/metrics/metrics.go
++++ b/internal/metrics/metrics.go
+@@ -113,6 +113,27 @@ var (
+ 		Help: "Panics recovered inside analyzer.process() — indicates malformed on-chain data.",
+ 	})
+ 
++	// PositionROIPct tracks current ROI % per open position.
++	// Label set is deleted when the position closes.
++	PositionROIPct = promauto.NewGaugeVec(prometheus.GaugeOpts{
++		Name: "sniper_position_roi_pct",
++		Help: "Current ROI % for each open position (removed on close).",
++	}, []string{"token", "source", "symbol"})
++
++	// PositionCurrentSOL tracks current estimated sell value per open position.
++	// Label set is deleted when the position closes.
++	PositionCurrentSOL = promauto.NewGaugeVec(prometheus.GaugeOpts{
++		Name: "sniper_position_current_sol",
++		Help: "Current estimated sell value in SOL per open position (removed on close).",
++	}, []string{"token", "source", "symbol"})
++
++	// ClosedPositionPnL records final P&L of every closed position.
++	// Never deleted — used for the leaderboard table.
++	ClosedPositionPnL = promauto.NewGaugeVec(prometheus.GaugeOpts{
++		Name: "sniper_closed_position_pnl_sol",
++		Help: "Final P&L in SOL for each closed position, labeled by trigger.",
++	}, []string{"token", "source", "symbol", "trigger"})
++
+ 	// TokensScannedBySource counts new token events labeled by source DEX.
+ 	TokensScannedBySource = promauto.NewCounterVec(prometheus.CounterOpts{
+ 		Name: "sniper_tokens_scanned_by_source_total",

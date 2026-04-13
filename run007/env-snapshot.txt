@@ -1,0 +1,36 @@
+# ── RPC ────────────────────────────────────────────────────────────────────────
+RPC_URL=https://mainnet.helius-rpc.com/?api-key=022ac2b8-5274-4842-9ffb-d8c7988640fc
+RPC_WS_ENDPOINT=wss://mainnet.helius-rpc.com/?api-key=022ac2b8-5274-4842-9ffb-d8c7988640fc
+# ── Jito ───────────────────────────────────────────────────────────────────────
+JITO_BLOCK_ENGINE_URL=frankfurt.mainnet.block-engine.jito.wtf
+
+# ── Wallet ─────────────────────────────────────────────────────────────────────
+#BOT_PRIVATE_KEY=         <REDACTED>
+#BOT_WALLET_ADDR=         # base58-encoded public key
+
+BOT_PRIVATE_KEY=<REDACTED>
+BOT_WALLET_ADDR=BqLRLXsPgWPPVvN1naooz4UfgGKRXe8Luot3rFQ5UHK8
+
+# ── Redis ──────────────────────────────────────────────────────────────────────
+REDIS_ADDR=127.0.0.1:6379
+REDIS_PASSWORD=
+
+# ── Trading ────────────────────────────────────────────────────────────────────
+SIMULATION_MODE=true     # set false to submit real transactions
+MIN_LIQUIDITY_SOL=3.0
+MAX_BUY_SOL=0.1
+TAKE_PROFIT_PCT=100
+STOP_LOSS_PCT=30
+SLIPPAGE_PCT=15
+MAX_FRICTION_PCT=10.0
+POSITION_MONITOR_INTERVAL=10    # seconds
+MAX_ACTIVE_POSITIONS=100         # cap concurrent positions to limit RPC rate-limit storms
+
+# ── Solana Programs ────────────────────────────────────────────────────────────
+RAYDIUM_AMM_PROGRAM=675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+PUMP_FUN_PROGRAM=6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
+RAYDIUM_DISABLED=true
+
+# ── API ────────────────────────────────────────────────────────────────────────
+API_PORT=8080
+CAPTURE_TIME=2026-04-13T20:45:54Z

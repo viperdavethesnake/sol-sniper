@@ -210,8 +210,15 @@ func (e *Executor) executeBuy(ctx context.Context, sig *analyzer.TradeSignal) {
 
 	e.mu.RLock()
 	_, exists := e.positions[mintStr]
+	posCount := len(e.positions)
 	e.mu.RUnlock()
 	if exists {
+		return
+	}
+
+	if e.cfg.MaxActivePositions > 0 && posCount >= e.cfg.MaxActivePositions {
+		log.Debug().Int("positions", posCount).Int("cap", e.cfg.MaxActivePositions).Str("mint", mintStr).Msg("executor: position cap reached, skipping buy")
+		metrics.TokensFiltered.WithLabelValues("position_cap").Inc()
 		return
 	}
 
@@ -357,6 +364,8 @@ func (e *Executor) savePosition(ctx context.Context, sig *analyzer.TradeSignal, 
 	_ = e.cache.SavePosition(ctx, mintStr, pos)
 	metrics.ActivePositions.Inc()
 	metrics.PositionsOpenedBySource.WithLabelValues(sig.Source).Inc()
+	metrics.PositionROIPct.WithLabelValues(mintStr, sig.Source, sig.Symbol).Set(0)
+	metrics.PositionCurrentSOL.WithLabelValues(mintStr, sig.Source, sig.Symbol).Set(solSpent)
 }
 
 // ─── Sell ─────────────────────────────────────────────────────────────────────
@@ -370,17 +379,18 @@ func (e *Executor) executeSell(ctx context.Context, pos *Position, trigger strin
 
 	// Atomically claim this position — prevents duplicate sells from concurrent
 	// monitor ticks or kill-switch races.
+	// Note: checkPosition pre-sets Status="selling" before spawning this goroutine,
+	// so "selling" is a valid starting state here. Only bail if already "sold".
 	pos.mu.Lock()
-	if pos.Status != "open" && pos.Status != "selling" {
+	if pos.Status == "sold" {
 		pos.mu.Unlock()
 		return
 	}
-	if pos.Status == "selling" {
-		// Another goroutine already claimed it.
-		pos.mu.Unlock()
-		return
+	if pos.Status == "open" {
+		// Direct call path (e.g. kill-switch): claim it now.
+		pos.Status = "selling"
 	}
-	pos.Status = "selling"
+	// Status is "selling" — pre-claimed by checkPosition; proceed.
 	pos.mu.Unlock()
 
 	mintStr := pos.Token
@@ -519,6 +529,9 @@ func (e *Executor) closePosition(ctx context.Context, pos *Position, trigger, tx
 	})
 	metrics.ActivePositions.Dec()
 	metrics.PnLSOL.Add(deltaSOL)
+	metrics.PositionROIPct.DeleteLabelValues(pos.Token, pos.Source, pos.Symbol)
+	metrics.PositionCurrentSOL.DeleteLabelValues(pos.Token, pos.Source, pos.Symbol)
+	metrics.ClosedPositionPnL.WithLabelValues(pos.Token, pos.Source, pos.Symbol, trigger).Set(deltaSOL)
 
 	if e.dw != nil {
 		traj := e.buildTrajectory(ctx, pos.Token)
@@ -671,7 +684,7 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
 		pos.mu.Unlock()
 		log.Info().Str("mint", pos.Token).Float64("roi_pct", roiPct).Msg("executor: stop-loss")
 		go e.executeSell(ctx, pos, "stop_loss")
-	case elapsed > 15*time.Minute:
+	case elapsed > 5*time.Minute:
 		pos.Status = "selling"
 		pos.mu.Unlock()
 		log.Info().Str("mint", pos.Token).Msg("executor: position timeout")
@@ -679,6 +692,10 @@ func (e *Executor) checkPosition(ctx context.Context, pos *Position) {
 	default:
 		pos.mu.Unlock()
 	}
+
+	// Update per-position Prometheus gauges outside the lock.
+	metrics.PositionROIPct.WithLabelValues(pos.Token, pos.Source, pos.Symbol).Set(roiPct)
+	metrics.PositionCurrentSOL.WithLabelValues(pos.Token, pos.Source, pos.Symbol).Set(currentSOL)
 }
 
 func (e *Executor) buildTrajectory(ctx context.Context, tokenAddr string) []dataset.TrajectoryPoint {

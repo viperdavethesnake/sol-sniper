@@ -1,0 +1,9 @@
+a0c5028 fix(grafana): add allowedHosts + base url to BotAPI datasource
+7ccbc52 fix(dashboard): add parser=backend + source=url to all Infinity targets
+acbd6a7 feat(dashboard): live positions table + leaderboard + source breakdown
+44d3572 fix(executor): add monitor debug log + E2 SIM slippage haircut
+984366b fix(executor): fix Pump.fun monitor path, race conditions, and tip scaling
+1929b62 Fix tip overhead: count round-trip (×2) not one-way
+eb68db3 Add Jito tip overhead to Pump.fun friction score
+68847b2 Fix Pump.fun friction math, add ML feature fields, harden analyzer pipeline
+f9db432 Initial commit — SS-V1 Solana sniper bot

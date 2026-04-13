@@ -36,12 +36,16 @@ type Config struct {
 	// Solana program IDs
 	RaydiumAMMProgram string // Raydium AMM V4 program ID
 	PumpFunProgram    string // Pump.fun program ID
+	RaydiumDisabled   bool   // skip Raydium listener subscription entirely
 
 	// API
 	APIPort string
 
 	// Simulation
 	SimulationMode bool // analyse and log but never submit real transactions
+
+	// Position cap — prevents rate-limit storms when many tokens pass analysis simultaneously.
+	MaxActivePositions int // 0 = unlimited; >0 = skip new buys when at limit
 }
 
 // Load reads configuration from environment (and optional .env file).
@@ -70,6 +74,7 @@ func Load() (*Config, error) {
 		APIPort:        getEnv("API_PORT", "8080"),
 		RaydiumAMMProgram: getEnv("RAYDIUM_AMM_PROGRAM", "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"),
 		PumpFunProgram:    getEnv("PUMP_FUN_PROGRAM", "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+		RaydiumDisabled:   getEnv("RAYDIUM_DISABLED", "false") == "true",
 	}
 
 	cfg.MinLiqSOL = mustFloat(getEnv("MIN_LIQUIDITY_SOL", "5.0"))
@@ -81,6 +86,9 @@ func Load() (*Config, error) {
 
 	interval, _ := strconv.Atoi(getEnv("POSITION_MONITOR_INTERVAL", "30"))
 	cfg.MonitorInterval = interval
+
+	maxPos, _ := strconv.Atoi(getEnv("MAX_ACTIVE_POSITIONS", "0"))
+	cfg.MaxActivePositions = maxPos
 
 	if !simMode {
 		if cfg.PrivateKey == "" {

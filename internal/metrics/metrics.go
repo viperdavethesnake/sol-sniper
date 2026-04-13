@@ -113,6 +113,27 @@ var (
 		Help: "Panics recovered inside analyzer.process() — indicates malformed on-chain data.",
 	})
 
+	// PositionROIPct tracks current ROI % per open position.
+	// Label set is deleted when the position closes.
+	PositionROIPct = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sniper_position_roi_pct",
+		Help: "Current ROI % for each open position (removed on close).",
+	}, []string{"token", "source", "symbol"})
+
+	// PositionCurrentSOL tracks current estimated sell value per open position.
+	// Label set is deleted when the position closes.
+	PositionCurrentSOL = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sniper_position_current_sol",
+		Help: "Current estimated sell value in SOL per open position (removed on close).",
+	}, []string{"token", "source", "symbol"})
+
+	// ClosedPositionPnL records final P&L of every closed position.
+	// Never deleted — used for the leaderboard table.
+	ClosedPositionPnL = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sniper_closed_position_pnl_sol",
+		Help: "Final P&L in SOL for each closed position, labeled by trigger.",
+	}, []string{"token", "source", "symbol", "trigger"})
+
 	// TokensScannedBySource counts new token events labeled by source DEX.
 	TokensScannedBySource = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sniper_tokens_scanned_by_source_total",

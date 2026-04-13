@@ -77,11 +77,26 @@ func (l *Listener) subscribe(ctx context.Context) error {
 	}
 	defer wsClient.Close()
 
-	raydiumSub, err := wsClient.LogsSubscribeMentions(l.raydiumProg, rpc.CommitmentConfirmed)
-	if err != nil {
-		return err
+	// Raydium subscription is optional — disable when not actively trading Raydium
+	// to eliminate vault_read_error noise from the training dataset.
+	raydiumCh := make(chan *ws.LogResult, 64)
+	if !l.cfg.RaydiumDisabled {
+		raydiumSub, err := wsClient.LogsSubscribeMentions(l.raydiumProg, rpc.CommitmentConfirmed)
+		if err != nil {
+			return err
+		}
+		defer raydiumSub.Unsubscribe()
+		go func() {
+			for {
+				result, err := raydiumSub.Recv()
+				if err != nil {
+					close(raydiumCh)
+					return
+				}
+				raydiumCh <- result
+			}
+		}()
 	}
-	defer raydiumSub.Unsubscribe()
 
 	pumpSub, err := wsClient.LogsSubscribeMentions(l.pumpFunProg, rpc.CommitmentConfirmed)
 	if err != nil {
@@ -89,25 +104,7 @@ func (l *Listener) subscribe(ctx context.Context) error {
 	}
 	defer pumpSub.Unsubscribe()
 
-	log.Info().
-		Str("raydium", l.cfg.RaydiumAMMProgram).
-		Str("pump_fun", l.cfg.PumpFunProgram).
-		Msg("listener: WebSocket subscriptions active")
-
-	raydiumCh := make(chan *ws.LogResult, 64)
 	pumpCh := make(chan *ws.LogResult, 64)
-
-	// Receiver goroutines — forward raw results to buffered channels.
-	go func() {
-		for {
-			result, err := raydiumSub.Recv()
-			if err != nil {
-				close(raydiumCh)
-				return
-			}
-			raydiumCh <- result
-		}
-	}()
 	go func() {
 		for {
 			result, err := pumpSub.Recv()
@@ -118,6 +115,11 @@ func (l *Listener) subscribe(ctx context.Context) error {
 			pumpCh <- result
 		}
 	}()
+
+	log.Info().
+		Str("pump_fun", l.cfg.PumpFunProgram).
+		Bool("raydium_disabled", l.cfg.RaydiumDisabled).
+		Msg("listener: WebSocket subscriptions active")
 
 	for {
 		select {
